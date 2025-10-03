@@ -15,8 +15,8 @@ autotests = false
 # ACME library
 acme-lib = "0.9.1"
 
-# rustls for trait implementations
-rustls = { version = "0.24.0-dev.0" }
+        # rustls for trait implementations
+        rustls = { version = "0.24.0-dev.0", features = ["aws-lc-rs"] }
 
 # Async runtime
 tokio = { version = "1.34", features = ["io-util", "macros", "net", "rt", "rt-multi-thread"] }
@@ -47,11 +47,14 @@ anyhow = "1.0"
 # Network
 get_if_addrs = "0.5"
 
-# PKI types (needed for certificate handling)
-pki-types = { package = "rustls-pki-types", version = "1.12", features = ["alloc"] }
+        # PKI types (needed for certificate handling)
+        pki-types = { package = "rustls-pki-types", version = "1.12", features = ["alloc"] }
 
-# AWS-LC crypto provider
-aws-lc-rs = { version = "1.14", default-features = false }
+        # PEM file parsing
+        rustls-pemfile = "2.0"
+
+        # AWS-LC crypto provider
+        aws-lc-rs = { version = "1.14", default-features = false }
 
 [dev-dependencies]
 # For testing

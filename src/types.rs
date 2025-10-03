@@ -39,13 +39,16 @@ pub enum AcmeError {
     
     #[error("Unsupported challenge type: {0}")]
     UnsupportedChallenge(String),
+    
+    #[error("ACME library error: {0}")]
+    AcmeLib(#[from] acme_lib::Error),
 }
 
 /// Challenge types supported by ACME
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChallengeType {
-    Http01,
-    Dns01,
+    Http01(String, String), // token, key_authorization
+    Dns01(String, String),  // token, value to set in TXT record
 }
 
 /// ACME configuration
@@ -75,7 +78,7 @@ impl Default for AcmeConfig {
             directory_url: "https://acme-v02.api.letsencrypt.org/directory".to_string(),
             email: "webmaster@example.com".to_string(),
             allowed_ips: Vec::new(),
-            challenge_type: ChallengeType::Http01,
+            challenge_type: ChallengeType::Http01("".to_string(), "".to_string()),
             cache_dir: Some("/var/lib/easypeas/certs".to_string()),
             renewal_threshold_days: 30,
             is_staging: false,

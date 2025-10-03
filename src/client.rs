@@ -89,8 +89,8 @@ impl AcmeClient {
                 println!("❌ Failed to load ACME account: {}", error_msg);
                 
                 // Check if this is a private key format error
-                let is_private_key_error = error_msg.contains("Unsupported private key format") ||
-                    error_msg.contains("private key format") ||
+                let is_private_key_error = error_msg.contains("Unsupported private key format") || 
+                                         error_msg.contains("private key format") ||
                     error_msg.contains("key format");
                 
                 if is_private_key_error {
@@ -163,10 +163,10 @@ impl AcmeClient {
 
         println!("No certificate found in acme-lib persistence for domain: {}", domain);
         println!("Requesting ACME certificate for domain: {}", domain);
-        
+
         // Request a real ACME certificate
         let certified_key = self.request_acme_certificate(domain).await?;
-        
+
         // Cache the certificate
         {
             let mut cache = self.certificate_cache.write().await;
@@ -176,7 +176,7 @@ impl AcmeClient {
                 domain: domain.to_string(),
             });
         }
-        
+
         println!("ACME certificate cached for domain: {}", domain);
         println!("Certificate obtained for domain: {}", domain);
         
@@ -185,15 +185,163 @@ impl AcmeClient {
 
     /// Request an ACME certificate for the given domain
     async fn request_acme_certificate(&self, domain: &str) -> Result<Arc<CertifiedKey>, AcmeError> {
-        // This is a simplified version - in practice, you'd implement the full ACME flow here
-        // For now, we'll return an error indicating this needs to be implemented
-        Err(AcmeError::Client("ACME certificate request not yet implemented in rustls-acme".to_string()))
+        println!("🔍 Requesting ACME certificate for domain: {}", domain);
+        
+        // Use the same persistence directory as initialize_account
+        let cache_dir = self.config.cache_dir.as_deref()
+            .ok_or_else(|| AcmeError::Client("ACME cache directory not configured".to_string()))?;
+        let acme_persist_dir = format!("{}/acme_lib", cache_dir);
+        
+        // Create a file persistence for ACME data using the same directory
+        let persist = acme_lib::persist::FilePersist::new(&acme_persist_dir);
+        
+        // Use the configured directory URL
+        let url = if self.config.is_staging {
+            acme_lib::DirectoryUrl::LetsEncryptStaging
+        } else {
+            acme_lib::DirectoryUrl::LetsEncrypt
+        };
+        
+        // Create ACME directory
+        let dir = acme_lib::Directory::from_url(persist, url)
+            .map_err(|e| AcmeError::Client(format!("Failed to create ACME directory: {}", e)))?;
+        
+        // Get or create account using the configured email
+        let email = if self.config.email.is_empty() {
+            format!("webmaster@{}", domain)
+        } else {
+            self.config.email.clone()
+        };
+        
+        let account = match dir.account(&email) {
+            Ok(account) => {
+                println!("✅ Using existing ACME account for: {}", email);
+                account
+            }
+            Err(_) => {
+                println!("🔍 Creating new ACME account for: {}", email);
+                dir.account(&email)
+                    .map_err(|e| AcmeError::Client(format!("Failed to create ACME account: {}", e)))?
+            }
+        };
+        
+        // Create a new order for the domain
+        let mut order = account.new_order(domain, &[])
+            .map_err(|e| AcmeError::Client(format!("Failed to create ACME order: {}", e)))?;
+        
+        // Get the authorization
+        let auth = order.authorizations()
+            .map_err(|e| AcmeError::Client(format!("Failed to get authorizations: {}", e)))?;
+        if auth.is_empty() {
+            return Err(AcmeError::Client("No authorizations found".to_string()));
+        }
+        
+        // Process each authorization
+        for authz in auth {
+            println!("🔍 Processing authorization for domain: {}", authz.domain_name());
+            
+            // Get the HTTP-01 challenge
+            let challenge = authz.http_challenge();
+            println!("🔍 Found HTTP-01 challenge for domain: {}", domain);
+            
+            // Get the challenge data
+                let token = challenge.http_token();
+            let key_authorization = challenge.http_proof();
+            
+            // Store the challenge data for the HTTP server to serve
+            {
+                let mut storage = self.challenge_storage.write().await;
+                storage.insert(token.to_string(), ChallengeData {
+                    token: token.to_string(),
+                    key_authorization: key_authorization.clone(),
+                domain: domain.to_string(),
+                    challenge_type: ChallengeType::Http01(token.to_string(), key_authorization.clone()),
+                });
+            }
+            
+            println!("✅ Stored HTTP-01 challenge data for domain: {}", domain);
+            println!("🔍 Challenge token: {}", token);
+            println!("🔍 Key authorization: {}", key_authorization);
+            
+            // Tell the ACME server we're ready for the challenge
+            challenge.validate(5000)?; // 5 second timeout
+            
+            // Wait for the challenge to be validated by polling
+            loop {
+                order.refresh()?;
+                if let Some(ord_csr) = order.confirm_validations() {
+                    println!("✅ HTTP-01 challenge validated for domain: {}", domain);
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+            }
+        }
+        
+        // All challenges are validated, now request the certificate
+        println!("🔍 Requesting certificate for domain: {}", domain);
+        
+        // Convert to CSR order
+        let ord_csr = order.confirm_validations()
+            .ok_or_else(|| AcmeError::Client("Order not ready for finalization".to_string()))?;
+        
+        // Create a private key for the certificate
+        let pkey_pri = acme_lib::create_p384_key();
+        
+        // Submit the CSR and get the certificate
+        let ord_cert = ord_csr.finalize_pkey(pkey_pri, 5000)?;
+        let cert = ord_cert.download_and_save_cert()?;
+        
+        println!("✅ Certificate obtained for domain: {}", domain);
+        
+        // Parse the certificate and convert to rustls format
+        let certified_key = self.convert_certificate_to_certified_key(&cert, domain)?;
+        
+        Ok(certified_key)
     }
 
     /// Load certificate from acme-lib's persistence
     async fn load_certificate_from_acme_lib(&self, domain: &str) -> Result<Option<Arc<CertifiedKey>>, AcmeError> {
-        // This is a simplified version - in practice, you'd implement loading from acme-lib here
-        Ok(None)
+        println!("🔍 About to call load_certificate_from_acme_lib for domain: {}", domain);
+
+        // Use the same persistence directory as initialize_account
+        let cache_dir = self.config.cache_dir.as_deref()
+            .ok_or_else(|| AcmeError::Client("ACME cache directory not configured".to_string()))?;
+        let acme_persist_dir = format!("{}/acme_lib", cache_dir);
+        
+        // Create a file persistence for ACME data using the same directory
+        let persist = acme_lib::persist::FilePersist::new(&acme_persist_dir);
+        
+        // Use the configured directory URL
+        let url = if self.config.is_staging {
+            acme_lib::DirectoryUrl::LetsEncryptStaging
+        } else {
+            acme_lib::DirectoryUrl::LetsEncrypt
+        };
+        
+        // Create ACME directory
+        let dir = acme_lib::Directory::from_url(persist, url)
+            .map_err(|e| AcmeError::Client(format!("Failed to create ACME directory: {}", e)))?;
+        
+        // Get account using the configured email
+        let email = if self.config.email.is_empty() {
+            format!("webmaster@{}", domain)
+        } else {
+            self.config.email.clone()
+        };
+        
+        let account = match dir.account(&email) {
+            Ok(account) => account,
+            Err(_) => {
+                println!("No certificate found in acme-lib persistence for domain: {}", domain);
+                    return Ok(None);
+            }
+        };
+        
+        // For now, we'll just return None since the acme-lib API doesn't have a simple way
+        // to list existing orders. In a real implementation, you'd need to track orders
+        // separately or use a different approach to find existing certificates.
+                println!("No certificate found in acme-lib persistence for domain: {}", domain);
+                Ok(None)
     }
 
     /// Backup ACME certificates and account data to /root/.easyp_backup
@@ -366,7 +514,7 @@ impl AcmeClient {
         // Recreate the directory
         fs::create_dir_all(acme_persist_dir)
             .map_err(|e| AcmeError::Client(format!("Failed to recreate ACME directory: {}", e)))?;
-
+        
         // Set proper permissions
         #[cfg(unix)]
         {
@@ -378,7 +526,7 @@ impl AcmeClient {
             fs::set_permissions(acme_persist_dir, perms)
                 .map_err(|e| AcmeError::Client(format!("Failed to set permissions: {}", e)))?;
         }
-
+        
         Ok(())
     }
 
@@ -387,12 +535,79 @@ impl AcmeClient {
         format!("webmaster@{}", domain)
     }
 
+    /// Convert acme-lib Certificate to rustls CertifiedKey
+    fn convert_certificate_to_certified_key(
+        &self,
+        cert: &acme_lib::Certificate,
+        domain: &str,
+    ) -> Result<Arc<CertifiedKey>, AcmeError> {
+        use rustls_pemfile::Item;
+        use std::io::Cursor;
+        use pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+        use pki_types::pem::PemObject;
+
+        println!("🔍 Converting certificate to CertifiedKey for domain: {}", domain);
+
+        // Parse the certificate PEM to get DER bytes
+        let cert_pem = cert.certificate();
+        let cert_chain = CertificateDer::pem_slice_iter(cert_pem.as_bytes())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AcmeError::Client(format!("Failed to parse certificate PEM: {}", e)))?;
+
+        if cert_chain.is_empty() {
+            return Err(AcmeError::Client("No certificates found in PEM".to_string()));
+        }
+
+        println!("✅ Parsed {} certificates from PEM", cert_chain.len());
+
+        // Parse the private key PEM to get DER bytes
+        let key_pem = cert.private_key();
+        let mut key_cursor = Cursor::new(key_pem.as_bytes());
+        let parsed_key = rustls_pemfile::read_one(&mut key_cursor)
+            .map_err(|e| AcmeError::Client(format!("Failed to parse private key PEM: {}", e)))?;
+
+        let private_key = match parsed_key {
+            Some(Item::Pkcs8Key(key)) => {
+                println!("✅ Parsed PKCS#8 private key");
+                PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key))
+            }
+            _ => {
+                return Err(AcmeError::Client("Unsupported private key format".to_string()));
+            }
+        };
+
+        // Create CertifiedKey using the crypto provider
+        let provider = rustls::crypto::aws_lc_rs::default_provider();
+        let certified_key = CertifiedKey::from_der(
+            cert_chain.into(),
+            private_key,
+            &provider,
+        ).map_err(|e| AcmeError::Client(format!("Failed to create CertifiedKey: {}", e)))?;
+
+        println!("✅ Successfully created CertifiedKey for domain: {}", domain);
+        Ok(Arc::new(certified_key))
+    }
+
     /// Get challenge response for HTTP-01 challenge
     pub async fn get_challenge_response(&self, token: &str) -> Option<String> {
-        // This is a simplified implementation - in practice, you'd implement the full challenge handling here
-        // For now, we'll return None to indicate no challenge is available
         println!("🔍 get_challenge_response called for token: {}", token);
-        None
+        
+        let storage = self.challenge_storage.read().await;
+        if let Some(challenge_data) = storage.get(token) {
+            match &challenge_data.challenge_type {
+                ChallengeType::Http01(_, key_authorization) => {
+                    println!("✅ Found HTTP-01 challenge response for token: {}", token);
+                    Some(key_authorization.clone())
+                }
+                ChallengeType::Dns01(_, _) => {
+                    println!("❌ DNS-01 challenge not supported for token: {}", token);
+                    None
+                }
+            }
+        } else {
+            println!("❌ No challenge data found for token: {}", token);
+            None
+        }
     }
 
     /// Get cache statistics
