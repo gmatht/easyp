@@ -1,9 +1,9 @@
 #![allow(clippy::trivial_regex)]
 
-use futures::Future;
-use hyper::{service::service_fn_ok, Body, Method, Request, Response, Server};
 use lazy_static::lazy_static;
-use std::net::TcpListener;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 lazy_static! {
@@ -12,7 +12,8 @@ lazy_static! {
 
 pub struct TestServer {
     pub dir_url: String,
-    shutdown: Option<futures::sync::oneshot::Sender<()>>,
+    shutdown: Option<std::sync::mpsc::Sender<()>>,
+    finalized: Arc<Mutex<bool>>,
 }
 
 impl Drop for TestServer {
@@ -21,161 +22,177 @@ impl Drop for TestServer {
     }
 }
 
-fn get_directory(url: &str) -> Response<Body> {
-    const BODY: &str = r#"{
-    "keyChange": "<URL>/acme/key-change",
-    "newAccount": "<URL>/acme/new-acct",
-    "newNonce": "<URL>/acme/new-nonce",
-    "newOrder": "<URL>/acme/new-order",
-    "revokeCert": "<URL>/acme/revoke-cert",
-    "meta": {
+fn handle_connection(mut stream: TcpStream, url: &str, finalized: Arc<Mutex<bool>>) {
+    let mut buffer = [0; 1024];
+    stream.read(&mut buffer).unwrap();
+    
+    let request = String::from_utf8_lossy(&buffer[..]);
+    
+    if request.starts_with("GET /directory") {
+        let body = format!(r#"{{
+    "keyChange": "{}/acme/key-change",
+    "newAccount": "{}/acme/new-acct",
+    "newNonce": "{}/acme/new-nonce",
+    "newOrder": "{}/acme/new-order",
+    "revokeCert": "{}/acme/revoke-cert",
+    "meta": {{
         "caaIdentities": [
         "testdir.org"
         ]
-    }
-    }"#;
-    Response::new(Body::from(RE_URL.replace_all(BODY, url)))
-}
-
-fn head_new_nonce() -> Response<Body> {
-    Response::builder()
-        .status(204)
-        .header(
-            "Replay-Nonce",
-            "8_uBBV3N2DBRJczhoiB46ugJKUkUHxGzVe6xIMpjHFM",
-        )
-        .body(Body::empty())
-        .unwrap()
-}
-
-fn post_new_acct(url: &str) -> Response<Body> {
-    const BODY: &str = r#"{
+    }}
+    }}"#, url, url, url, url, url);
+        
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        
+        stream.write_all(response.as_bytes()).unwrap();
+    } else if request.starts_with("HEAD /acme/new-nonce") {
+        let response = "HTTP/1.1 204 No Content\r\nReplay-Nonce: 8_uBBV3N2DBRJczhoiB46ugJKUkUHxGzVe6xIMpjHFM\r\n\r\n";
+        stream.write_all(response.as_bytes()).unwrap();
+    } else if request.starts_with("POST /acme/new-acct") {
+        let body = format!(r#"{{
     "id": 7728515,
-    "key": {
+    "key": {{
         "use": "sig",
         "kty": "EC",
         "crv": "P-256",
         "alg": "ES256",
         "x": "ttpobTRK2bw7ttGBESRO7Nb23mbIRfnRZwunL1W6wRI",
         "y": "h2Z00J37_2qRKH0-flrHEsH0xbit915Tyvd2v_CAOSk"
-    },
+    }},
     "contact": [
         "mailto:foo@bar.com"
     ],
     "initialIp": "90.171.37.12",
     "createdAt": "2018-12-31T17:15:40.399104457Z",
     "status": "valid"
-    }"#;
-    let location: String = RE_URL.replace_all("<URL>/acme/acct/7728515", url).into();
-    Response::builder()
-        .status(201)
-        .header("Location", location)
-        .body(Body::from(BODY))
-        .unwrap()
-}
-
-fn post_new_order(url: &str) -> Response<Body> {
-    const BODY: &str = r#"{
+    }}"#);
+        
+        let response = format!(
+            "HTTP/1.1 201 Created\r\nLocation: {}/acme/acct/7728515\r\nContent-Length: {}\r\nContent-Type: application/json\r\n\r\n{}",
+            url, body.len(), body
+        );
+        
+        stream.write_all(response.as_bytes()).unwrap();
+    } else if request.starts_with("POST /acme/new-order") {
+        let body = format!(r#"{{
     "status": "pending",
     "expires": "2019-01-09T08:26:43.570360537Z",
     "identifiers": [
-        {
+        {{
         "type": "dns",
         "value": "acmetest.example.com"
-        }
+        }}
     ],
     "authorizations": [
-        "<URL>/acme/authz/YTqpYUthlVfwBncUufE8IRWLMSRqcSs"
+        "{}/acme/authz/YTqpYUthlVfwBncUufE8IRWLMSRqcSs"
     ],
-    "finalize": "<URL>/acme/finalize/7738992/18234324"
-    }"#;
-    let location: String = RE_URL
-        .replace_all("<URL>/acme/order/YTqpYUthlVfwBncUufE8", url)
-        .into();
-    Response::builder()
-        .status(201)
-        .header("Location", location)
-        .body(Body::from(RE_URL.replace_all(BODY, url)))
-        .unwrap()
-}
-
-fn post_get_order(url: &str) -> Response<Body> {
-    const BODY: &str = r#"{
-    "status": "<STATUS>",
+    "finalize": "{}/acme/finalize/7738992/18234324"
+    }}"#, url, url);
+        
+        let response = format!(
+            "HTTP/1.1 201 Created\r\nLocation: {}/acme/order/YTqpYUthlVfwBncUufE8\r\nContent-Length: {}\r\nContent-Type: application/json\r\n\r\n{}",
+            url, body.len(), body
+        );
+        
+        stream.write_all(response.as_bytes()).unwrap();
+    } else if request.starts_with("POST /acme/order/YTqpYUthlVfwBncUufE8") {
+        let is_finalized = *finalized.lock().unwrap();
+        let status = if is_finalized { "valid" } else { "pending" };
+        
+        let body = format!(r#"{{
+    "status": "{}",
     "expires": "2019-01-09T08:26:43.570360537Z",
     "identifiers": [
-        {
+        {{
         "type": "dns",
         "value": "acmetest.example.com"
-        }
+        }}
     ],
     "authorizations": [
-        "<URL>/acme/authz/YTqpYUthlVfwBncUufE8IRWLMSRqcSs"
+        "{}/acme/authz/YTqpYUthlVfwBncUufE8IRWLMSRqcSs"
     ],
-    "finalize": "<URL>/acme/finalize/7738992/18234324",
-    "certificate": "<URL>/acme/cert/fae41c070f967713109028"
-    }"#;
-    let b = RE_URL.replace_all(BODY, url).to_string();
-    Response::builder().status(200).body(Body::from(b)).unwrap()
-}
-
-fn post_authz(url: &str) -> Response<Body> {
-    const BODY: &str = r#"{
-        "identifier": {
+    "finalize": "{}/acme/finalize/7738992/18234324",
+    "certificate": "{}/acme/cert/fae41c070f967713109028"
+    }}"#, status, url, url, url);
+        
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\n\r\n{}",
+            body.len(), body
+        );
+        
+        stream.write_all(response.as_bytes()).unwrap();
+    } else if request.starts_with("POST /acme/authz/YTqpYUthlVfwBncUufE8IRWLMSRqcSs") {
+        let body = format!(r#"{{
+        "identifier": {{
             "type": "dns",
             "value": "acmetest.algesten.se"
-        },
+        }},
         "status": "pending",
         "expires": "2019-01-09T08:26:43Z",
         "challenges": [
-        {
+        {{
             "type": "http-01",
             "status": "pending",
-            "url": "<URL>/acme/challenge/YTqpYUthlVfwBncUufE8IRWLMSRqcSs/216789597",
+            "url": "{}/acme/challenge/YTqpYUthlVfwBncUufE8IRWLMSRqcSs/216789597",
             "token": "MUi-gqeOJdRkSb_YR2eaMxQBqf6al8dgt_dOttSWb0w"
-        },
-        {
+        }},
+        {{
             "type": "tls-alpn-01",
             "status": "pending",
-            "url": "<URL>/acme/challenge/YTqpYUthlVfwBncUufE8IRWLMSRqcSs/216789598",
+            "url": "{}/acme/challenge/YTqpYUthlVfwBncUufE8IRWLMSRqcSs/216789598",
             "token": "WCdRWkCy4THTD_j5IH4ISAzr59lFIg5wzYmKxuOJ1lU"
-        },
-        {
+        }},
+        {{
             "type": "dns-01",
             "status": "pending",
-            "url": "<URL>/acme/challenge/YTqpYUthlVfwBncUufE8IRWLMSRqcSs/216789599",
+            "url": "{}/acme/challenge/YTqpYUthlVfwBncUufE8IRWLMSRqcSs/216789599",
             "token": "RRo2ZcXAEqxKvMH8RGcATjSK1KknLEUmauwfQ5i3gG8"
-        }
+        }}
         ]
-    }"#;
-    Response::builder()
-        .status(201)
-        .body(Body::from(RE_URL.replace_all(BODY, url)))
-        .unwrap()
-}
-
-fn post_finalize(_url: &str) -> Response<Body> {
-    Response::builder().status(200).body(Body::empty()).unwrap()
-}
-
-fn post_certificate(_url: &str) -> Response<Body> {
-    Response::builder()
-        .status(200)
-        .body("CERT HERE".into())
-        .unwrap()
-}
-
-fn route_request(req: Request<Body>, url: &str) -> Response<Body> {
-    match (req.method(), req.uri().path()) {
-        (&Method::GET, "/directory") => get_directory(url),
-        (&Method::HEAD, "/acme/new-nonce") => head_new_nonce(),
-        (&Method::POST, "/acme/new-acct") => post_new_acct(url),
-        (&Method::POST, "/acme/new-order") => post_new_order(url),
-        (&Method::POST, "/acme/order/YTqpYUthlVfwBncUufE8") => post_get_order(url),
-        (&Method::POST, "/acme/authz/YTqpYUthlVfwBncUufE8IRWLMSRqcSs") => post_authz(url),
-        (&Method::POST, "/acme/finalize/7738992/18234324") => post_finalize(url),
-        (&Method::POST, "/acme/cert/fae41c070f967713109028") => post_certificate(url),
-        (_, _) => Response::builder().status(404).body(Body::empty()).unwrap(),
+    }}"#, url, url, url);
+        
+        let response = format!(
+            "HTTP/1.1 201 Created\r\nContent-Length: {}\r\nContent-Type: application/json\r\n\r\n{}",
+            body.len(), body
+        );
+        
+        stream.write_all(response.as_bytes()).unwrap();
+    } else if request.starts_with("POST /acme/finalize/7738992/18234324") {
+        // Mark as finalized
+        *finalized.lock().unwrap() = true;
+        
+        let body = format!(r#"{{
+    "status": "valid",
+    "expires": "2019-01-09T08:26:43.570360537Z",
+    "identifiers": [
+        {{
+        "type": "dns",
+        "value": "acmetest.example.com"
+        }}
+    ],
+    "authorizations": [
+        "{}/acme/authz/YTqpYUthlVfwBncUufE8IRWLMSRqcSs"
+    ],
+    "finalize": "{}/acme/finalize/7738992/18234324",
+    "certificate": "{}/acme/cert/fae41c070f967713109028"
+    }}"#, url, url, url);
+        
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\n\r\n{}",
+            body.len(), body
+        );
+        
+        stream.write_all(response.as_bytes()).unwrap();
+    } else if request.starts_with("POST /acme/cert/fae41c070f967713109028") {
+        let response = "HTTP/1.1 200 OK\r\nContent-Length: 9\r\n\r\nCERT HERE";
+        stream.write_all(response.as_bytes()).unwrap();
+    } else {
+        let response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+        stream.write_all(response.as_bytes()).unwrap();
     }
 }
 
@@ -186,25 +203,36 @@ pub fn with_directory_server() -> TestServer {
     let url = format!("http://127.0.0.1:{}", port);
     let dir_url = format!("{}/directory", url);
 
-    let make_service = move || {
-        let url2 = url.clone();
-        service_fn_ok(move |req| route_request(req, &url2))
-    };
-    let server = Server::from_tcp(tcp).unwrap().serve(make_service);
-
-    let (tx, rx) = futures::sync::oneshot::channel::<()>();
-
-    let graceful = server
-        .with_graceful_shutdown(rx)
-        .map_err(|err| eprintln!("server error: {}", err));
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    let finalized = Arc::new(Mutex::new(false));
+    let finalized_clone = finalized.clone();
 
     thread::spawn(move || {
-        hyper::rt::run(graceful);
+        for stream in tcp.incoming() {
+            match stream {
+                Ok(stream) => {
+                    let url2 = url.clone();
+                    let finalized2 = finalized_clone.clone();
+                    thread::spawn(move || {
+                        handle_connection(stream, &url2, finalized2);
+                    });
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                }
+            }
+            
+            // Check if we should shutdown
+            if rx.try_recv().is_ok() {
+                break;
+            }
+        }
     });
 
     TestServer {
         dir_url,
         shutdown: Some(tx),
+        finalized,
     }
 }
 
