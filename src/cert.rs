@@ -62,7 +62,10 @@ pub(crate) fn create_csr(pkey: &PrivateKeyDer<'static>, domains: &[&str]) -> Res
             KeyPair::from_pem(&String::from_utf8_lossy(&pem))
                 .map_err(|e| format!("Failed to create KeyPair from PKCS8: {}", e))?
         }
-        _ => return Err("Unsupported private key format".into()),
+        other => {
+            println!("🔍 ACME-LIB: ❌ Unsupported private key format in cert.rs: {:?}", other);
+            return Err("Unsupported private key format".into());
+        }
     };
     
     // Create certificate parameters for the CSR

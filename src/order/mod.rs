@@ -211,10 +211,20 @@ impl<P: Persist> CsrOrder<P> {
         use std::io::Cursor;
         
         let mut cursor = Cursor::new(private_key_pem.as_bytes());
-        let private_key = match rustls_pemfile::read_one(&mut cursor)
-            .map_err(|e| format!("Error reading private key PEM: {}", e))? {
-            Some(Item::Pkcs8Key(key)) => PrivateKeyDer::Pkcs8(rustls_pki_types::PrivatePkcs8KeyDer::from(key)),
-            _ => return Err("Unsupported private key format".into()),
+        let parsed_item = rustls_pemfile::read_one(&mut cursor)
+            .map_err(|e| format!("Error reading private key PEM: {}", e))?;
+        
+        println!("🔍 ACME-LIB: Parsed private key in order/mod.rs: {:?}", parsed_item);
+        
+        let private_key = match parsed_item {
+            Some(Item::Pkcs8Key(key)) => {
+                println!("🔍 ACME-LIB: ✅ Found Pkcs8Key format in order (expected)");
+                PrivateKeyDer::Pkcs8(rustls_pki_types::PrivatePkcs8KeyDer::from(key))
+            },
+            other => {
+                println!("🔍 ACME-LIB: ❌ Unsupported private key format in order: {:?}", other);
+                return Err("Unsupported private key format".into());
+            }
         };
         self.finalize_pkey(private_key, delay_millis)
     }
