@@ -17,7 +17,7 @@
 //! [`Challenge`]: struct.Challenge.html
 //! [`CsrOrder`]: struct.CsrOrder.html
 //! [`CertOrder`]: struct.CertOrder.html
-use openssl::pkey::{self, PKey};
+use rustls_pki_types::PrivateKeyDer;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -207,12 +207,19 @@ impl<P: Persist> CsrOrder<P> {
     ///
     /// [`finalize_pkey`]: struct.CsrOrder.html#method.finalize_pkey
     pub fn finalize(self, private_key_pem: &str, delay_millis: u64) -> Result<CertOrder<P>> {
-        let pkey_pri = PKey::private_key_from_pem(private_key_pem.as_bytes())
-            .map_err(|e| format!("Error reading private key PEM: {}", e))?;
-        self.finalize_pkey(pkey_pri, delay_millis)
+        use rustls_pemfile::Item;
+        use std::io::Cursor;
+        
+        let mut cursor = Cursor::new(private_key_pem.as_bytes());
+        let private_key = match rustls_pemfile::read_one(&mut cursor)
+            .map_err(|e| format!("Error reading private key PEM: {}", e))? {
+            Some(Item::Pkcs8Key(key)) => PrivateKeyDer::Pkcs8(rustls_pki_types::PrivatePkcs8KeyDer::from(key)),
+            _ => return Err("Unsupported private key format".into()),
+        };
+        self.finalize_pkey(private_key, delay_millis)
     }
 
-    /// Lower level finalize call that works directly with the openssl crate structures.
+    /// Lower level finalize call that works directly with the rustls crate structures.
     ///
     /// Creates the CSR for the domains in the order and submit it to the ACME API.
     ///
@@ -221,7 +228,7 @@ impl<P: Persist> CsrOrder<P> {
     /// amount of time to wait between each poll attempt.
     pub fn finalize_pkey(
         self,
-        private_key: PKey<pkey::Private>,
+        private_key: PrivateKeyDer<'static>,
         delay_millis: u64,
     ) -> Result<CertOrder<P>> {
         //
@@ -229,10 +236,9 @@ impl<P: Persist> CsrOrder<P> {
         let domains = self.order.api_order.domains();
 
         // csr from private key and authorized domains.
-        let csr = create_csr(&private_key, &domains)?;
+        let csr_der = create_csr(&private_key, &domains)?;
 
         // this is not the same as PEM.
-        let csr_der = csr.to_der().expect("to_der()");
         let csr_enc = base64url(&csr_der);
         let finalize = ApiFinalize { csr: csr_enc };
 
@@ -278,7 +284,7 @@ fn wait_for_order_status<P: Persist>(
 
 /// Order for an issued certificate that is ready to download.
 pub struct CertOrder<P: Persist> {
-    private_key: PKey<pkey::Private>,
+    private_key: PrivateKeyDer<'static>,
     order: Order<P>,
 }
 
@@ -301,7 +307,23 @@ impl<P: Persist> CertOrder<P> {
         // save key and cert into persistence
         let persist = &inner.persist;
         let pk_key = PersistKey::new(realm, PersistKind::PrivateKey, &primary_name);
-        let pkey_pem_bytes = self.private_key.private_key_to_pem_pkcs8().expect("to_pem");
+        
+        // Convert PrivateKeyDer to PEM format
+        let pkey_pem_bytes = match &self.private_key {
+            PrivateKeyDer::Pkcs8(pkcs8) => {
+                let mut pem = Vec::new();
+                pem.extend_from_slice(b"-----BEGIN PRIVATE KEY-----\n");
+                let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, pkcs8.secret_pkcs8_der());
+                for chunk in encoded.as_bytes().chunks(64) {
+                    pem.extend_from_slice(chunk);
+                    pem.push(b'\n');
+                }
+                pem.extend_from_slice(b"-----END PRIVATE KEY-----\n");
+                pem
+            }
+            _ => panic!("Unsupported private key format"),
+        };
+        
         let pkey_pem = String::from_utf8_lossy(&pkey_pem_bytes);
         debug!("Save private key: {}", pk_key);
         persist.put(&pk_key, &pkey_pem_bytes)?;

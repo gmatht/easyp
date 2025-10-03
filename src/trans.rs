@@ -1,5 +1,4 @@
-use openssl::ecdsa::EcdsaSig;
-use openssl::sha::sha256;
+use ring::signature::{EcdsaKeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -205,15 +204,30 @@ fn jws_with<T: Serialize + ?Sized>(
     };
 
     let to_sign = format!("{}.{}", protected, payload);
-    let digest = sha256(to_sign.as_bytes());
-    let sig = EcdsaSig::sign(&digest, key.private_key()).expect("EcdsaSig::sign");
-    let r = sig.r().to_vec();
-    let s = sig.s().to_vec();
-
-    let mut v = Vec::with_capacity(r.len() + s.len());
-    v.extend_from_slice(&r);
-    v.extend_from_slice(&s);
-    let signature = base64url(&v);
+    
+    // Get the private key and create EcdsaKeyPair
+    let private_key = key.private_key();
+    let pkcs8 = match private_key {
+        rustls_pki_types::PrivateKeyDer::Pkcs8(pkcs8) => pkcs8.secret_pkcs8_der(),
+        _ => panic!("Unsupported private key format for signing"),
+    };
+    
+    use ring::rand::SystemRandom;
+    
+    let rng = SystemRandom::new();
+    let key_pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8, &rng)
+        .expect("Failed to create EcdsaKeyPair");
+    
+    // Sign the digest
+    let signature = key_pair.sign(&rng, to_sign.as_bytes()).expect("Failed to sign");
+    let signature_bytes = signature.as_ref();
+    
+    // For ECDSA P-256, the signature is 64 bytes: 32 bytes r + 32 bytes s
+    if signature_bytes.len() != 64 {
+        panic!("Invalid ECDSA signature length");
+    }
+    
+    let signature = base64url(signature_bytes);
 
     let jws = Jws::new(protected, payload, signature);
 

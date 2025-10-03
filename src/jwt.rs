@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 
 use crate::acc::AcmeKey;
-use crate::cert::EC_GROUP_P256;
 use crate::util::base64url;
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -58,20 +57,41 @@ pub(crate) struct JwkThumb {
 
 impl From<&AcmeKey> for Jwk {
     fn from(a: &AcmeKey) -> Self {
-        let mut ctx = openssl::bn::BigNumContext::new().expect("BigNumContext");
-        let mut x = openssl::bn::BigNum::new().expect("BigNum");
-        let mut y = openssl::bn::BigNum::new().expect("BigNum");
-        a.private_key()
-            .public_key()
-            .affine_coordinates_gfp(&*EC_GROUP_P256, &mut x, &mut y, &mut ctx)
-            .expect("affine_coordinates_gfp");
+        use ring::signature::EcdsaKeyPair;
+        use ring::signature::ECDSA_P256_SHA256_FIXED_SIGNING;
+        
+        let private_key = a.private_key();
+        let pkcs8 = match private_key {
+            rustls_pki_types::PrivateKeyDer::Pkcs8(pkcs8) => pkcs8.secret_pkcs8_der(),
+            _ => panic!("Unsupported private key format for JWT"),
+        };
+        
+        use ring::rand::SystemRandom;
+        use ring::signature::KeyPair;
+        
+        let rng = SystemRandom::new();
+        let key_pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8, &rng)
+            .expect("Failed to create EcdsaKeyPair");
+        
+        // Extract public key coordinates
+        let public_key = key_pair.public_key();
+        let public_key_bytes = public_key.as_ref();
+        
+        // For P-256, the public key is 65 bytes: 0x04 + 32 bytes x + 32 bytes y
+        if public_key_bytes.len() != 65 || public_key_bytes[0] != 0x04 {
+            panic!("Invalid P-256 public key format");
+        }
+        
+        let x = &public_key_bytes[1..33];
+        let y = &public_key_bytes[33..65];
+        
         Jwk {
             alg: "ES256".into(),
             kty: "EC".into(),
             crv: "P-256".into(),
             _use: "sig".into(),
-            x: base64url(&x.to_vec()),
-            y: base64url(&y.to_vec()),
+            x: base64url(x),
+            y: base64url(y),
         }
     }
 }

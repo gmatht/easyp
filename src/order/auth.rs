@@ -1,5 +1,5 @@
 //
-use openssl::sha::sha256;
+use ring::digest;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -203,7 +203,10 @@ impl<P: Persist> Challenge<P, TlsAlpn> {
     /// certificate used for validation.
     pub fn tls_alpn_proof(&self) -> [u8; 32] {
         let acme_key = self.inner.transport.acme_key();
-        sha256(key_authorization(&self.api_challenge.token, acme_key, false).as_bytes())
+        let digest = digest::digest(&digest::SHA256, key_authorization(&self.api_challenge.token, acme_key, false).as_bytes());
+        let mut result = [0u8; 32];
+        result.copy_from_slice(digest.as_ref());
+        result
     }
 }
 
@@ -264,10 +267,10 @@ fn key_authorization(token: &str, key: &AcmeKey, extra_sha256: bool) -> String {
     let jwk: Jwk = key.into();
     let jwk_thumb: JwkThumb = (&jwk).into();
     let jwk_json = serde_json::to_string(&jwk_thumb).expect("jwk_thumb");
-    let digest = base64url(&sha256(jwk_json.as_bytes()));
+    let digest = base64url(&digest::digest(&digest::SHA256, jwk_json.as_bytes()));
     let key_auth = format!("{}.{}", token, digest);
     if extra_sha256 {
-        base64url(&sha256(key_auth.as_bytes()))
+        base64url(&digest::digest(&digest::SHA256, key_auth.as_bytes()))
     } else {
         key_auth
     }
