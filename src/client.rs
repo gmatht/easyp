@@ -384,7 +384,7 @@ impl AcmeClient {
                                 
                                 // Create CertifiedKey
                                 let private_key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key));
-                                let provider = rustls::crypto::aws_lc_rs::default_provider();
+                                let provider = rustls::crypto::ring::default_provider();
                                 let certified_key = CertifiedKey::from_der(
                                     cert_chain.into(),
                                     private_key,
@@ -637,7 +637,7 @@ impl AcmeClient {
         };
 
         // Create CertifiedKey using the crypto provider
-        let provider = rustls::crypto::aws_lc_rs::default_provider();
+        let provider = rustls::crypto::ring::default_provider();
         println!("🔍 Creating CertifiedKey with {} certificates", cert_chain.len());
         
         // Debug: Print certificate details

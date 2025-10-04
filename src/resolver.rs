@@ -97,6 +97,12 @@ impl OnDemandCertResolver {
     async fn get_or_create_certificate(&self, domain: &str) -> Result<Arc<CertifiedKey>, AcmeError> {
         println!("🔍 get_or_create_certificate called for domain: {}", domain);
         
+        // Check if this is an IP address
+        if domain.parse::<std::net::IpAddr>().is_ok() {
+            println!("🔍 IP address detected: {}, generating self-signed certificate", domain);
+            return self.generate_self_signed_certificate(domain).await;
+        }
+        
         // Check cache first
         {
             let cache = self.cert_cache.read().await;
@@ -162,10 +168,49 @@ impl OnDemandCertResolver {
         }
     }
 
-    /// Generate a self-signed certificate (fallback)
-    fn generate_self_signed_certificate(&self, domain: &str) -> Result<Arc<CertifiedKey>, AcmeError> {
-        // This is a simplified version - in practice, you'd implement self-signed certificate generation here
-        Err(AcmeError::Client("Self-signed certificate generation not yet implemented in rustls-acme".to_string()))
+    /// Generate a self-signed certificate for IP addresses
+    async fn generate_self_signed_certificate(&self, ip_address: &str) -> Result<Arc<CertifiedKey>, AcmeError> {
+        use rcgen::{CertificateParams, KeyPair, SanType};
+        
+        println!("🔍 Generating self-signed certificate for IP: {}", ip_address);
+        
+        // Parse the IP address
+        let ip_addr = ip_address.parse::<std::net::IpAddr>()
+            .map_err(|e| AcmeError::Validation(format!("Invalid IP address {}: {}", ip_address, e)))?;
+        
+        // Generate a new key pair
+        let key_pair = KeyPair::generate()
+            .map_err(|e| AcmeError::Validation(format!("Failed to generate key pair: {}", e)))?;
+        
+        // Create certificate parameters
+        let mut params = CertificateParams::new(vec![ip_address.to_string()])
+            .map_err(|e| AcmeError::Validation(format!("Failed to create certificate params: {}", e)))?;
+        
+        // Add the IP address as a Subject Alternative Name
+        let ip_san = SanType::IpAddress(ip_addr);
+        params.subject_alt_names = vec![ip_san];
+        
+        // Set additional parameters
+        params.distinguished_name = rcgen::DistinguishedName::new();
+        
+        // Generate the certificate
+        let cert = params.self_signed(&key_pair)
+            .map_err(|e| AcmeError::Validation(format!("Failed to generate certificate: {}", e)))?;
+        
+        // Convert to DER format
+        let cert_der = cert.der().to_vec();
+        
+        let key_der = key_pair.serialize_der();
+        
+        // Create the CertifiedKey using the correct API
+        let certified_key = Arc::new(rustls::sign::CertifiedKey::from_der(
+            vec![rustls::pki_types::CertificateDer::from(cert_der)].into(),
+            rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(key_der)),
+            &rustls::crypto::ring::default_provider(),
+        ).map_err(|e| AcmeError::Validation(format!("Failed to create CertifiedKey: {}", e)))?);
+        
+        println!("✅ Self-signed certificate generated for IP: {}", ip_address);
+        Ok(certified_key)
     }
 }
 
