@@ -198,8 +198,10 @@ impl ResolvesServerCert for OnDemandCertResolver {
         };
 
         // Use block_in_place to handle the async call
-        let result = rt.block_on(async {
-            self.get_or_create_certificate(server_name.as_ref()).await
+        let result = tokio::task::block_in_place(|| {
+            rt.block_on(async {
+                self.get_or_create_certificate(server_name.as_ref()).await
+            })
         });
 
         match result {

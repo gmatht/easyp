@@ -14,6 +14,7 @@ autotests = false
 [dependencies]
 # ACME library
 acme-lib = "0.9.1"
+acme-lib = { path = "../acme-lib" }
 
         # rustls for trait implementations
         rustls = { version = "0.24.0-dev.0", features = ["aws-lc-rs"] }
