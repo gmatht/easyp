@@ -198,20 +198,37 @@ impl ResolvesServerCert for OnDemandCertResolver {
         };
 
         // Use block_in_place to handle the async call
+        println!("🔍 Resolver: About to call block_in_place for certificate resolution");
         let result = tokio::task::block_in_place(|| {
+            println!("🔍 Resolver: Inside block_in_place, calling get_or_create_certificate");
             rt.block_on(async {
+                println!("🔍 Resolver: Inside async block, calling get_or_create_certificate");
                 self.get_or_create_certificate(server_name.as_ref()).await
             })
         });
+        println!("🔍 Resolver: Certificate resolution result: {:?}", result.is_ok());
 
         match result {
             Ok(certified_key) => {
                 println!("✅ Certificate resolved successfully for domain: {:?}", server_name);
+                
+                // Debug: Print signature schemes
+                let signature_schemes = client_hello.signature_schemes();
+                println!("🔍 Client signature schemes: {:?}", signature_schemes);
+                
                 // Convert our CertifiedKey to a CertifiedSigner
-                certified_key.signer(client_hello.signature_schemes())
-                    .ok_or(rustls::Error::PeerIncompatible(
-                        rustls::PeerIncompatible::NoSignatureSchemesInCommon
-                    ))
+                match certified_key.signer(signature_schemes) {
+                    Some(signer) => {
+                        println!("✅ Successfully created signer for domain: {:?}", server_name);
+                        Ok(signer)
+                    }
+                    None => {
+                        println!("❌ Failed to create signer - no compatible signature schemes for domain: {:?}", server_name);
+                        Err(rustls::Error::PeerIncompatible(
+                            rustls::PeerIncompatible::NoSignatureSchemesInCommon
+                        ))
+                    }
+                }
             }
             Err(e) => {
                 println!("❌ Failed to get certificate for domain {:?}: {}", server_name, e);

@@ -15,6 +15,8 @@ use std::println;
 
 use crate::types::*;
 use pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+use pki_types::pem::PemObject;
+use rustls_pemfile::Item;
 use aws_lc_rs;
 use base64;
 
@@ -337,11 +339,69 @@ impl AcmeClient {
             }
         };
         
-        // For now, we'll just return None since the acme-lib API doesn't have a simple way
-        // to list existing orders. In a real implementation, you'd need to track orders
-        // separately or use a different approach to find existing certificates.
-                println!("No certificate found in acme-lib persistence for domain: {}", domain);
-                Ok(None)
+        // Try to find existing certificates by looking for certificate files
+        println!("🔍 Looking for existing certificates in acme-lib persistence for domain: {}", domain);
+        
+        // Look for certificate files in the acme_lib directory
+        let cert_files = std::fs::read_dir(&acme_persist_dir)
+            .map_err(|e| AcmeError::Client(format!("Failed to read acme-lib directory: {}", e)))?;
+        
+        for entry in cert_files {
+            let entry = entry.map_err(|e| AcmeError::Client(format!("Failed to read directory entry: {}", e)))?;
+            let path = entry.path();
+            let file_name = path.file_name().unwrap().to_string_lossy();
+            
+            // Look for certificate files that match our domain
+            if file_name.contains("_crt_") && file_name.contains(&domain.replace(".", "_")) {
+                println!("🔍 Found potential certificate file: {}", file_name);
+                
+                // Try to load the certificate
+                if let Ok(cert_content) = std::fs::read_to_string(&path) {
+                    println!("🔍 Reading certificate file: {}", file_name);
+                    
+                    // Parse the certificate
+                    let cert_chain = CertificateDer::pem_slice_iter(cert_content.as_bytes())
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|e| AcmeError::Client(format!("Failed to parse certificate PEM: {}", e)))?;
+                    
+                    if !cert_chain.is_empty() {
+                        println!("✅ Found {} certificates in file: {}", cert_chain.len(), file_name);
+                        
+                        // Look for the corresponding private key file
+                        let key_file_name = file_name.replace("_crt_", "_key_");
+                        let key_path = path.parent().unwrap().join(&key_file_name);
+                        
+                        if let Ok(key_content) = std::fs::read_to_string(&key_path) {
+                            println!("🔍 Reading private key file: {}", key_file_name);
+                            
+                            // Parse the private key
+                            let mut key_cursor = std::io::Cursor::new(key_content.as_bytes());
+                            let parsed_key = rustls_pemfile::read_one(&mut key_cursor)
+                                .map_err(|e| AcmeError::Client(format!("Failed to parse private key PEM: {}", e)))?;
+                            
+                            if let Some(Item::Pkcs8Key(key)) = parsed_key {
+                                println!("✅ Parsed PKCS#8 private key from file: {}", key_file_name);
+                                
+                                // Create CertifiedKey
+                                let private_key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key));
+                                let provider = rustls::crypto::aws_lc_rs::default_provider();
+                                let certified_key = CertifiedKey::from_der(
+                                    cert_chain.into(),
+                                    private_key,
+                                    &provider,
+                                ).map_err(|e| AcmeError::Client(format!("Failed to create CertifiedKey: {}", e)))?;
+                                
+                                println!("✅ Successfully loaded certificate from acme-lib persistence for domain: {}", domain);
+                                return Ok(Some(Arc::new(certified_key)));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        println!("No certificate found in acme-lib persistence for domain: {}", domain);
+        Ok(None)
     }
 
     /// Backup ACME certificates and account data to /root/.easyp_backup
@@ -578,11 +638,21 @@ impl AcmeClient {
 
         // Create CertifiedKey using the crypto provider
         let provider = rustls::crypto::aws_lc_rs::default_provider();
+        println!("🔍 Creating CertifiedKey with {} certificates", cert_chain.len());
+        
+        // Debug: Print certificate details
+        for (i, cert) in cert_chain.iter().enumerate() {
+            println!("🔍 Certificate {}: {} bytes", i, cert.len());
+        }
+        
         let certified_key = CertifiedKey::from_der(
             cert_chain.into(),
             private_key,
             &provider,
-        ).map_err(|e| AcmeError::Client(format!("Failed to create CertifiedKey: {}", e)))?;
+        ).map_err(|e| {
+            println!("❌ Failed to create CertifiedKey: {}", e);
+            AcmeError::Client(format!("Failed to create CertifiedKey: {}", e))
+        })?;
 
         println!("✅ Successfully created CertifiedKey for domain: {}", domain);
         Ok(Arc::new(certified_key))
@@ -608,6 +678,24 @@ impl AcmeClient {
             println!("❌ No challenge data found for token: {}", token);
             None
         }
+    }
+
+    /// Get all HTTP-01 challenges for syncing to HTTP server
+    pub async fn get_all_http_challenges(&self) -> std::collections::BTreeMap<String, String> {
+        println!("🔍 get_all_http_challenges called");
+        
+        let storage = self.challenge_storage.read().await;
+        let mut challenges = std::collections::BTreeMap::new();
+        
+        for (token, challenge_data) in storage.iter() {
+            if let ChallengeType::Http01(_, key_authorization) = &challenge_data.challenge_type {
+                challenges.insert(token.clone(), key_authorization.clone());
+                println!("✅ Found HTTP-01 challenge: {} -> {}", token, key_authorization);
+            }
+        }
+        
+        println!("🔍 Returning {} HTTP-01 challenges", challenges.len());
+        challenges
     }
 
     /// Get cache statistics

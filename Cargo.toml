@@ -13,7 +13,6 @@ autotests = false
 
 [dependencies]
 # ACME library
-acme-lib = "0.9.1"
 acme-lib = { path = "../acme-lib" }
 
         # rustls for trait implementations
