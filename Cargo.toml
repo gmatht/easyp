@@ -19,7 +19,7 @@ acme-lib = { path = "../acme-lib" }
         rustls = { version = "0.24.0-dev.0", features = ["ring"] }
 
 # Async runtime
-tokio = { version = "1.34", features = ["io-util", "macros", "net", "rt", "rt-multi-thread"] }
+tokio = { version = "1.34", features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -34,8 +34,7 @@ rcgen = { version = "0.14.4", features = ["pem", "ring"], default-features = fal
 # Time handling
 time = { version = "0.3.6", default-features = false }
 
-# DNS resolution
-hickory-resolver = { version = "0.25", features = ["https-aws-lc-rs", "webpki-roots"] }
+# DNS resolution - REMOVED: Not actually used, ACME handles domain validation
 
 # Logging
 log = "0.4"
@@ -54,7 +53,7 @@ get_if_addrs = "0.5"
         rustls-pemfile = "2.0"
 
         # AWS-LC crypto provider
-        aws-lc-rs = { version = "1.14", default-features = false }
+        aws-lc-rs = { version = "1.14", features = ["non-fips"], default-features = false }
 
 [dev-dependencies]
 # For testing
