@@ -283,6 +283,61 @@ impl OnDemandCertResolver {
             }
         }
     }
+
+    /// Resolve certificate for localhost connections (use self-signed certificate)
+    fn resolve_for_localhost(&self, client_hello: &rustls::server::ClientHello<'_>) -> Result<rustls::sign::CertifiedSigner, rustls::Error> {
+        println!("🔍 Resolving certificate for localhost connection");
+        
+        // Create a new tokio runtime for this call
+        let rt = match tokio::runtime::Handle::try_current() {
+            Ok(handle) => handle,
+            Err(_) => {
+                // If we're not in a tokio context, create a new runtime
+                match tokio::runtime::Runtime::new() {
+                    Ok(rt) => rt.handle().clone(),
+                    Err(e) => {
+                        println!("❌ Failed to create tokio runtime: {}", e);
+                        return Err(rustls::Error::NoSuitableCertificate);
+                    }
+                }
+            }
+        };
+
+        // Use block_in_place to handle the async call
+        let result = tokio::task::block_in_place(|| {
+            rt.block_on(async {
+                self.generate_self_signed_certificate("127.0.0.1").await
+            })
+        });
+
+        match result {
+            Ok(certified_key) => {
+                println!("✅ Self-signed certificate generated for localhost");
+                
+                // Get signature schemes from client hello
+                let signature_schemes = client_hello.signature_schemes();
+                println!("🔍 Client signature schemes: {:?}", signature_schemes);
+                
+                // Convert our CertifiedKey to a CertifiedSigner
+                match certified_key.signer(signature_schemes) {
+                    Some(signer) => {
+                        println!("✅ Successfully created signer for localhost");
+                        Ok(signer)
+                    }
+                    None => {
+                        println!("❌ Failed to create signer - no compatible signature schemes for localhost");
+                        Err(rustls::Error::PeerIncompatible(
+                            rustls::PeerIncompatible::NoSignatureSchemesInCommon
+                        ))
+                    }
+                }
+            }
+            Err(e) => {
+                println!("❌ Failed to generate self-signed certificate for localhost: {}", e);
+                Err(rustls::Error::NoSuitableCertificate)
+            }
+        }
+    }
 }
 
 impl ResolvesServerCert for OnDemandCertResolver {
@@ -297,6 +352,12 @@ impl ResolvesServerCert for OnDemandCertResolver {
                 return self.resolve_for_ip_connection(client_hello);
             }
         };
+
+        // Check if this is localhost - use self-signed certificate instead of ACME
+        if server_name.as_ref() == "localhost" {
+            println!("🔍 localhost detected - using self-signed certificate instead of ACME");
+            return self.resolve_for_localhost(client_hello);
+        }
 
         println!("🔍 Resolver: About to call get_or_create_certificate for domain: {:?}", server_name);
         

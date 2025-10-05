@@ -4,21 +4,15 @@
 //! certificates from Let's Encrypt and other ACME-compliant certificate authorities.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use std::string::String;
 use std::vec::Vec;
 use std::format;
 use std::string::ToString;
-use std::vec;
 use std::println;
 
 use crate::types::*;
-use pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
-use pki_types::pem::PemObject;
-use rustls_pemfile::Item;
-use aws_lc_rs;
-use base64;
 
 use tokio::sync::RwLock;
 
@@ -247,17 +241,18 @@ impl AcmeClient {
             println!("🔍 Found HTTP-01 challenge for domain: {}", domain);
             
             // Get the challenge data
-                let token = challenge.http_token();
+            let token = challenge.http_token();
             let key_authorization = challenge.http_proof();
+            let token_string = token.to_string();
             
             // Store the challenge data for the HTTP server to serve
             {
                 let mut storage = self.challenge_storage.write().await;
-                storage.insert(token.to_string(), ChallengeData {
-                    token: token.to_string(),
+                storage.insert(token_string.clone(), ChallengeData {
+                    token: token_string.clone(),
                     key_authorization: key_authorization.clone(),
                 domain: domain.to_string(),
-                    challenge_type: ChallengeType::Http01(token.to_string(), key_authorization.clone()),
+                    challenge_type: ChallengeType::Http01(token_string.clone(), key_authorization.clone()),
                 });
             }
             
@@ -273,6 +268,13 @@ impl AcmeClient {
                 order.refresh()?;
                 if let Some(ord_csr) = order.confirm_validations() {
                     println!("✅ HTTP-01 challenge validated for domain: {}", domain);
+                    
+                    // Clean up the challenge from storage after successful validation
+                    {
+                        let mut storage = self.challenge_storage.write().await;
+                        storage.remove(&token_string);
+                        println!("🧹 Cleaned up challenge for domain: {}", domain);
+                    }
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(1000));
@@ -310,6 +312,9 @@ impl AcmeClient {
             .ok_or_else(|| AcmeError::Client("ACME cache directory not configured".to_string()))?;
         let acme_persist_dir = format!("{}/acme_lib", cache_dir);
         
+        println!("🔍 Cache directory: {}", cache_dir);
+        println!("🔍 ACME persist directory: {}", acme_persist_dir);
+        
         // Create a file persistence for ACME data using the same directory
         let persist = acme_lib::persist::FilePersist::new(&acme_persist_dir);
         
@@ -339,68 +344,34 @@ impl AcmeClient {
             }
         };
         
-        // Try to find existing certificates by looking for certificate files
+        // Try to find existing certificates using acme-lib's API
         println!("🔍 Looking for existing certificates in acme-lib persistence for domain: {}", domain);
+        println!("🔍 ACME persist directory: {}", acme_persist_dir);
         
-        // Look for certificate files in the acme_lib directory
-        let cert_files = std::fs::read_dir(&acme_persist_dir)
-            .map_err(|e| AcmeError::Client(format!("Failed to read acme-lib directory: {}", e)))?;
+        // Check if directory exists
+        if !std::path::Path::new(&acme_persist_dir).exists() {
+            println!("⚠️  ACME persist directory does not exist: {}", acme_persist_dir);
+            return Ok(None);
+        }
         
-        for entry in cert_files {
-            let entry = entry.map_err(|e| AcmeError::Client(format!("Failed to read directory entry: {}", e)))?;
-            let path = entry.path();
-            let file_name = path.file_name().unwrap().to_string_lossy();
-            
-            // Look for certificate files that match our domain
-            if file_name.contains("_crt_") && file_name.contains(&domain.replace(".", "_")) {
-                println!("🔍 Found potential certificate file: {}", file_name);
+        // Use acme-lib's built-in certificate retrieval
+        match account.certificate(domain) {
+            Ok(Some(cert)) => {
+                println!("✅ Found existing certificate in acme-lib persistence for domain: {}", domain);
                 
-                // Try to load the certificate
-                if let Ok(cert_content) = std::fs::read_to_string(&path) {
-                    println!("🔍 Reading certificate file: {}", file_name);
-                    
-                    // Parse the certificate
-                    let cert_chain = CertificateDer::pem_slice_iter(cert_content.as_bytes())
-                        .collect::<Result<Vec<_>, _>>()
-                        .map_err(|e| AcmeError::Client(format!("Failed to parse certificate PEM: {}", e)))?;
-                    
-                    if !cert_chain.is_empty() {
-                        println!("✅ Found {} certificates in file: {}", cert_chain.len(), file_name);
-                        
-                        // Look for the corresponding private key file
-                        let key_file_name = file_name.replace("_crt_", "_key_");
-                        let key_path = path.parent().unwrap().join(&key_file_name);
-                        
-                        if let Ok(key_content) = std::fs::read_to_string(&key_path) {
-                            println!("🔍 Reading private key file: {}", key_file_name);
-                            
-                            // Parse the private key
-                            let mut key_cursor = std::io::Cursor::new(key_content.as_bytes());
-                            let parsed_key = rustls_pemfile::read_one(&mut key_cursor)
-                                .map_err(|e| AcmeError::Client(format!("Failed to parse private key PEM: {}", e)))?;
-                            
-                            if let Some(Item::Pkcs8Key(key)) = parsed_key {
-                                println!("✅ Parsed PKCS#8 private key from file: {}", key_file_name);
-                                
-                                // Create CertifiedKey
-                                let private_key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key));
-                                let provider = rustls::crypto::ring::default_provider();
-                                let certified_key = CertifiedKey::from_der(
-                                    cert_chain.into(),
-                                    private_key,
-                                    &provider,
-                                ).map_err(|e| AcmeError::Client(format!("Failed to create CertifiedKey: {}", e)))?;
-                                
-                                println!("✅ Successfully loaded certificate from acme-lib persistence for domain: {}", domain);
-                                return Ok(Some(Arc::new(certified_key)));
-                            }
-                        }
-                    }
-                }
+                // Convert acme-lib Certificate to rustls CertifiedKey
+                let certified_key = self.convert_certificate_to_certified_key(&cert, domain)?;
+                println!("✅ Successfully loaded certificate from acme-lib persistence for domain: {}", domain);
+                return Ok(Some(certified_key));
+            }
+            Ok(None) => {
+                println!("🔍 No certificate found in acme-lib persistence for domain: {}", domain);
+            }
+            Err(e) => {
+                println!("⚠️  Error checking for existing certificate: {}", e);
             }
         }
         
-        println!("No certificate found in acme-lib persistence for domain: {}", domain);
         Ok(None)
     }
 
@@ -696,6 +667,12 @@ impl AcmeClient {
         
         println!("🔍 Returning {} HTTP-01 challenges", challenges.len());
         challenges
+    }
+
+    /// Get direct access to the shared challenge storage
+    /// This allows the HTTP server to access challenges without polling
+    pub fn get_challenge_storage(&self) -> Arc<RwLock<HashMap<String, ChallengeData>>> {
+        self.challenge_storage.clone()
     }
 
     /// Get cache statistics
