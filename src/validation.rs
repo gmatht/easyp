@@ -50,14 +50,15 @@ impl DnsValidator {
     pub async fn validate_domain(&self, domain: &str) -> ValidationResult {
         println!("🔍 Validating domain: {}", domain);
         
-        // If no allowed IPs are configured, allow all domains (for testing)
+        // If no allowed IPs are configured, this is a fundamental system error
+        // The server should always have at least localhost (127.0.0.1)
         if self.allowed_ips.is_empty() {
-            println!("✅ Domain {} allowed (no IP restrictions configured)", domain);
-            return ValidationResult::Valid;
+            panic!("❌ No allowed IPs configured - server has no network interfaces! This should never happen.");
         }
         
         // Use the same DNS resolution technique as ureq/minreq: std::net::ToSocketAddrs
         println!("🔍 Resolving domain {} using std::net::ToSocketAddrs", domain);
+        println!("🔍 Allowed IPs: {:?}", self.allowed_ips);
         
         // Try to resolve the domain to IP addresses
         let socket_addrs = match (domain, 80).to_socket_addrs() {
@@ -95,6 +96,7 @@ impl DnsValidator {
             ValidationResult::Valid
         } else {
             println!("❌ Domain {} validation failed - no allowed IPs found", domain);
+            println!("💡 Tip: Ensure DNS points to this server's IP addresses: {:?}", self.allowed_ips);
             ValidationResult::InvalidIp
         }
     }
@@ -110,7 +112,18 @@ impl DnsValidator {
     }
 
     /// Check if validation is enabled (has allowed IPs configured)
+    /// 
+    /// Validation is always enabled - the server should always have allowed IPs.
+    /// If no allowed IPs are configured, it's a system error.
     pub fn is_validation_enabled(&self) -> bool {
+        true
+    }
+    
+    /// Check if validation is properly configured (has allowed IPs)
+    /// 
+    /// This should always return true in normal operation.
+    /// If it returns false, the server has no network interfaces.
+    pub fn is_validation_configured(&self) -> bool {
         !self.allowed_ips.is_empty()
     }
 }
