@@ -41,7 +41,7 @@ hickory-resolver = { version = "0.25", features = ["https-aws-lc-rs", "webpki-ro
 log = "0.4"
 
 # Error handling
-thiserror = "1.0"
+thiserror = "2.0"
 anyhow = "1.0"
 
 # Network
