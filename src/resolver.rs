@@ -182,13 +182,25 @@ impl OnDemandCertResolver {
         let key_pair = KeyPair::generate()
             .map_err(|e| AcmeError::Validation(format!("Failed to generate key pair: {}", e)))?;
         
-        // Create certificate parameters
-        let mut params = CertificateParams::new(vec![ip_address.to_string()])
+        // Create certificate parameters with localhost as the main subject
+        let mut params = CertificateParams::new(vec!["localhost".to_string()])
             .map_err(|e| AcmeError::Validation(format!("Failed to create certificate params: {}", e)))?;
         
-        // Add the IP address as a Subject Alternative Name
-        let ip_san = SanType::IpAddress(ip_addr);
-        params.subject_alt_names = vec![ip_san];
+        // Add multiple Subject Alternative Names for better compatibility
+        let mut sans = vec![
+            SanType::DnsName(rcgen::string::Ia5String::try_from("localhost").unwrap()),
+            SanType::IpAddress(ip_addr),
+        ];
+        
+        // Also add common localhost IPs for better compatibility
+        if ip_address != "127.0.0.1" {
+            sans.push(SanType::IpAddress(std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1))));
+        }
+        if ip_address != "::1" {
+            sans.push(SanType::IpAddress(std::net::IpAddr::V6(std::net::Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1))));
+        }
+        
+        params.subject_alt_names = sans;
         
         // Set additional parameters
         params.distinguished_name = rcgen::DistinguishedName::new();
@@ -212,6 +224,65 @@ impl OnDemandCertResolver {
         println!("✅ Self-signed certificate generated for IP: {}", ip_address);
         Ok(certified_key)
     }
+
+    /// Resolve certificate for IP address connections (when no server name is provided)
+    fn resolve_for_ip_connection(&self, client_hello: &rustls::server::ClientHello<'_>) -> Result<rustls::sign::CertifiedSigner, rustls::Error> {
+        println!("🔍 Resolving certificate for IP address connection");
+        
+        // For IP connections, we'll generate a self-signed certificate for localhost
+        // This is a reasonable fallback since we can't determine the exact IP from the ClientHello
+        let fallback_ip = "127.0.0.1";
+        
+        // Create a new tokio runtime for this call
+        let rt = match tokio::runtime::Handle::try_current() {
+            Ok(handle) => handle,
+            Err(_) => {
+                // If we're not in a tokio context, create a new runtime
+                match tokio::runtime::Runtime::new() {
+                    Ok(rt) => rt.handle().clone(),
+                    Err(e) => {
+                        println!("❌ Failed to create tokio runtime: {}", e);
+                        return Err(rustls::Error::NoSuitableCertificate);
+                    }
+                }
+            }
+        };
+
+        // Use block_in_place to handle the async call
+        let result = tokio::task::block_in_place(|| {
+            rt.block_on(async {
+                self.generate_self_signed_certificate(fallback_ip).await
+            })
+        });
+
+        match result {
+            Ok(certified_key) => {
+                println!("✅ Self-signed certificate generated for IP connection");
+                
+                // Get signature schemes from client hello
+                let signature_schemes = client_hello.signature_schemes();
+                println!("🔍 Client signature schemes: {:?}", signature_schemes);
+                
+                // Convert our CertifiedKey to a CertifiedSigner
+                match certified_key.signer(signature_schemes) {
+                    Some(signer) => {
+                        println!("✅ Successfully created signer for IP connection");
+                        Ok(signer)
+                    }
+                    None => {
+                        println!("❌ Failed to create signer - no compatible signature schemes for IP connection");
+                        Err(rustls::Error::PeerIncompatible(
+                            rustls::PeerIncompatible::NoSignatureSchemesInCommon
+                        ))
+                    }
+                }
+            }
+            Err(e) => {
+                println!("❌ Failed to generate self-signed certificate for IP connection: {}", e);
+                Err(rustls::Error::NoSuitableCertificate)
+            }
+        }
+    }
 }
 
 impl ResolvesServerCert for OnDemandCertResolver {
@@ -219,8 +290,11 @@ impl ResolvesServerCert for OnDemandCertResolver {
         let server_name = match client_hello.server_name() {
             Some(name) => name,
             None => {
-                println!("❌ No server name provided in ClientHello");
-                return Err(rustls::Error::NoSuitableCertificate);
+                println!("🔍 No server name provided in ClientHello - likely IP address connection");
+                // When no server name is provided, it's likely an IP address connection
+                // We'll generate a self-signed certificate for a generic IP
+                // The actual IP will be determined from the connection
+                return self.resolve_for_ip_connection(client_hello);
             }
         };
 
