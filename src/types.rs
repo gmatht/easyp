@@ -79,7 +79,7 @@ impl Default for AcmeConfig {
             email: "webmaster@example.com".to_string(),
             allowed_ips: Vec::new(),
             challenge_type: ChallengeType::Http01("".to_string(), "".to_string()),
-            cache_dir: Some("/var/lib/easypeas/certs".to_string()),
+            cache_dir: Some("/var/lib/easyp/certs".to_string()),
             renewal_threshold_days: 30,
             is_staging: false,
             bogus_domain: None,

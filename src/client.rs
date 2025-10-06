@@ -14,13 +14,14 @@ use std::println;
 
 use crate::types::*;
 
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Mutex};
 
 /// ACME client for certificate management
 pub struct AcmeClient {
     config: AcmeConfig,
     certificate_cache: Arc<RwLock<HashMap<String, CachedCertificate>>>,
     challenge_storage: Arc<RwLock<HashMap<String, ChallengeData>>>,
+    certificate_requests: Arc<Mutex<HashMap<String, Arc<tokio::sync::Notify>>>>,
 }
 
 impl AcmeClient {
@@ -29,6 +30,7 @@ impl AcmeClient {
         Self {
             certificate_cache: Arc::new(RwLock::new(HashMap::new())),
             challenge_storage: Arc::new(RwLock::new(HashMap::new())),
+            certificate_requests: Arc::new(Mutex::new(HashMap::new())),
             config,
         }
     }
@@ -119,29 +121,46 @@ impl AcmeClient {
             let cache = self.certificate_cache.read().await;
             if let Some(cached) = cache.get(domain) {
                 if cached.expires_at > SystemTime::now() {
-                    println!("OLD CERT OK");
+                    println!("✅ Certificate found in cache for domain: {}", domain);
                     return Ok(cached.certified_key.clone());
                 }
-                println!("CERT EXPIRED");
+                println!("⚠️ Certificate expired for domain: {}", domain);
             } else {
-                // Get the SHA256 of the current binary for debugging
-                let binary_path = std::env::current_exe().unwrap_or_else(|_| "unknown".into());
-                let sha256 = if let Ok(content) = std::fs::read(&binary_path) {
-                    use std::collections::hash_map::DefaultHasher;
-                    use std::hash::{Hash, Hasher};
-                    let mut hasher = DefaultHasher::new();
-                    content.hash(&mut hasher);
-                    format!("{:x}", hasher.finish())
-                } else {
-                    "unknown".to_string()
-                };
-                println!("NO CERT IN CACHE! Binary: {} SHA256: {}", binary_path.display(), sha256);
+                println!("❌ No certificate in cache for domain: {}", domain);
             }   
+        }
+
+        // Check if another request for this domain is already in progress
+        let should_wait = {
+            let mut requests = self.certificate_requests.lock().await;
+            if let Some(existing_notify) = requests.get(domain) {
+                println!("⏳ Certificate request already in progress for domain: {}, waiting...", domain);
+                Some(existing_notify.clone())
+            } else {
+                // Create a new notification for this domain
+                let notify = Arc::new(tokio::sync::Notify::new());
+                requests.insert(domain.to_string(), notify.clone());
+                None
+            }
+        };
+
+        // If another request is in progress, wait for it
+        if let Some(notify) = should_wait {
+            notify.notified().await;
+            
+            // Check cache again after waiting
+            let cache = self.certificate_cache.read().await;
+            if let Some(cached) = cache.get(domain) {
+                if cached.expires_at > SystemTime::now() {
+                    println!("✅ Certificate obtained from concurrent request for domain: {}", domain);
+                    return Ok(cached.certified_key.clone());
+                }
+            }
         }
 
         // Try to load from acme-lib's persistence
         println!("🔍 About to call load_certificate_from_acme_lib for domain: {}", domain);
-        if let Some(certified_key) = self.load_certificate_from_acme_lib(domain).await? {
+        let result = if let Some(certified_key) = self.load_certificate_from_acme_lib(domain).await? {
             println!("✅ Certificate loaded from acme-lib persistence for domain: {}", domain);
             
             // Cache the certificate
@@ -154,29 +173,39 @@ impl AcmeClient {
                 });
             }
             
-            return Ok(certified_key);
-        }
+            Ok(certified_key)
+        } else {
+            println!("No certificate found in acme-lib persistence for domain: {}", domain);
+            println!("Requesting ACME certificate for domain: {}", domain);
 
-        println!("No certificate found in acme-lib persistence for domain: {}", domain);
-        println!("Requesting ACME certificate for domain: {}", domain);
+            // Request a real ACME certificate
+            let certified_key = self.request_acme_certificate(domain).await?;
 
-        // Request a real ACME certificate
-        let certified_key = self.request_acme_certificate(domain).await?;
+            // Cache the certificate
+            {
+                let mut cache = self.certificate_cache.write().await;
+                cache.insert(domain.to_string(), CachedCertificate {
+                    certified_key: certified_key.clone(),
+                    expires_at: SystemTime::now() + Duration::from_secs(30 * 24 * 60 * 60), // 30 days
+                    domain: domain.to_string(),
+                });
+            }
 
-        // Cache the certificate
+            println!("ACME certificate cached for domain: {}", domain);
+            Ok(certified_key)
+        };
+
+        // Clean up request tracking and notify waiting requests
         {
-            let mut cache = self.certificate_cache.write().await;
-            cache.insert(domain.to_string(), CachedCertificate {
-                certified_key: certified_key.clone(),
-                expires_at: SystemTime::now() + Duration::from_secs(30 * 24 * 60 * 60), // 30 days
-                domain: domain.to_string(),
-            });
+            let mut requests = self.certificate_requests.lock().await;
+            if let Some(notify) = requests.remove(domain) {
+                println!("🔔 Notifying waiting requests for domain: {}", domain);
+                notify.notify_waiters();
+            }
         }
 
-        println!("ACME certificate cached for domain: {}", domain);
-        println!("Certificate obtained for domain: {}", domain);
-        
-        Ok(certified_key)
+        println!("✅ Certificate obtained for domain: {}", domain);
+        result
     }
 
     /// Request an ACME certificate for the given domain

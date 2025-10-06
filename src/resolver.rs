@@ -22,6 +22,7 @@ pub struct OnDemandCertResolver {
     acme_client: Arc<AcmeClient>,
     dns_validator: Arc<DnsValidator>,
     cert_cache: Arc<RwLock<HashMap<String, CachedCertificate>>>,
+    self_signed_cache: Arc<RwLock<HashMap<String, Arc<CertifiedKey>>>>,
 }
 
 impl OnDemandCertResolver {
@@ -37,6 +38,7 @@ impl OnDemandCertResolver {
             acme_client,
             dns_validator,
             cert_cache: Arc::new(RwLock::new(HashMap::new())),
+            self_signed_cache: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -52,6 +54,7 @@ impl OnDemandCertResolver {
             acme_client,
             dns_validator,
             cert_cache: Arc::new(RwLock::new(HashMap::new())),
+            self_signed_cache: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -168,22 +171,43 @@ impl OnDemandCertResolver {
         }
     }
 
-    /// Generate a self-signed certificate for IP addresses
-    async fn generate_self_signed_certificate(&self, ip_address: &str) -> Result<Arc<CertifiedKey>, AcmeError> {
+    /// Generate a self-signed certificate for IP addresses or localhost
+    async fn generate_self_signed_certificate(&self, identifier: &str) -> Result<Arc<CertifiedKey>, AcmeError> {
+        // Check cache first
+        {
+            let cache = self.self_signed_cache.read().await;
+            if let Some(cached_cert) = cache.get(identifier) {
+                println!("✅ Using cached self-signed certificate for: {}", identifier);
+                return Ok(cached_cert.clone());
+            }
+        }
+        
         use rcgen::{CertificateParams, KeyPair, SanType};
         
-        println!("🔍 Generating self-signed certificate for IP: {}", ip_address);
+        println!("🔍 Generating Safari-compatible self-signed certificate for: {}", identifier);
         
-        // Parse the IP address
-        let ip_addr = ip_address.parse::<std::net::IpAddr>()
-            .map_err(|e| AcmeError::Validation(format!("Invalid IP address {}: {}", ip_address, e)))?;
+        // Handle localhost specially
+        let (main_subject, ip_addr) = if identifier == "localhost" {
+            ("localhost".to_string(), std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+        } else {
+            // Parse the IP address
+            let ip_addr = identifier.parse::<std::net::IpAddr>()
+                .map_err(|e| AcmeError::Validation(format!("Invalid identifier {}: {}", identifier, e)))?;
+            (identifier.to_string(), ip_addr)
+        };
         
-        // Generate a new key pair
-        let key_pair = KeyPair::generate()
-            .map_err(|e| AcmeError::Validation(format!("Failed to generate key pair: {}", e)))?;
+        // Generate key pair - try RSA first, fallback to ECDSA
+        let key_pair = if let Ok(rsa_key) = KeyPair::generate_rsa_for(&rcgen::PKCS_RSA_SHA256, rcgen::RsaKeySize::_2048) {
+            println!("✅ Generated RSA key pair for Safari compatibility");
+            rsa_key
+        } else {
+            println!("⚠️  RSA key generation failed, falling back to ECDSA");
+            KeyPair::generate()
+                .map_err(|e| AcmeError::Validation(format!("Failed to generate key pair: {}", e)))?
+        };
         
-        // Create certificate parameters with localhost as the main subject
-        let mut params = CertificateParams::new(vec!["localhost".to_string()])
+        // Create certificate parameters with the main subject
+        let mut params = CertificateParams::new(vec![main_subject.clone()])
             .map_err(|e| AcmeError::Validation(format!("Failed to create certificate params: {}", e)))?;
         
         // Add multiple Subject Alternative Names for better compatibility
@@ -192,18 +216,29 @@ impl OnDemandCertResolver {
             SanType::IpAddress(ip_addr),
         ];
         
-        // Also add common localhost IPs for better compatibility
-        if ip_address != "127.0.0.1" {
+        // Add common localhost IPs for better compatibility
+        if identifier != "127.0.0.1" {
             sans.push(SanType::IpAddress(std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1))));
         }
-        if ip_address != "::1" {
+        if identifier != "::1" {
             sans.push(SanType::IpAddress(std::net::IpAddr::V6(std::net::Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1))));
         }
         
         params.subject_alt_names = sans;
         
-        // Set additional parameters
+        // Set additional parameters for Safari compatibility
         params.distinguished_name = rcgen::DistinguishedName::new();
+        
+        // Set key usage for TLS server authentication
+        params.key_usages = vec![
+            rcgen::KeyUsagePurpose::DigitalSignature,
+            rcgen::KeyUsagePurpose::KeyEncipherment,
+        ];
+        
+        // Set extended key usage for TLS server authentication
+        params.extended_key_usages = vec![
+            rcgen::ExtendedKeyUsagePurpose::ServerAuth,
+        ];
         
         // Generate the certificate
         let cert = params.self_signed(&key_pair)
@@ -221,7 +256,13 @@ impl OnDemandCertResolver {
             &rustls::crypto::ring::default_provider(),
         ).map_err(|e| AcmeError::Validation(format!("Failed to create CertifiedKey: {}", e)))?);
         
-        println!("✅ Self-signed certificate generated for IP: {}", ip_address);
+        // Cache the certificate
+        {
+            let mut cache = self.self_signed_cache.write().await;
+            cache.insert(identifier.to_string(), certified_key.clone());
+        }
+        
+        println!("✅ Self-signed certificate generated and cached for: {}", identifier);
         Ok(certified_key)
     }
 
@@ -231,7 +272,7 @@ impl OnDemandCertResolver {
         
         // For IP connections, we'll generate a self-signed certificate for localhost
         // This is a reasonable fallback since we can't determine the exact IP from the ClientHello
-        let fallback_ip = "127.0.0.1";
+        let fallback_ip = "localhost";
         
         // Create a new tokio runtime for this call
         let rt = match tokio::runtime::Handle::try_current() {
@@ -306,7 +347,7 @@ impl OnDemandCertResolver {
         // Use block_in_place to handle the async call
         let result = tokio::task::block_in_place(|| {
             rt.block_on(async {
-                self.generate_self_signed_certificate("127.0.0.1").await
+                self.generate_self_signed_certificate("localhost").await
             })
         });
 
