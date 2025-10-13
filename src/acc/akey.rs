@@ -1,4 +1,4 @@
-use rustls_pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
+use rustls_pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer, PrivateSec1KeyDer, PrivatePkcs1KeyDer};
 use ring::signature::EcdsaKeyPair;
 use ring::signature::ECDSA_P256_SHA256_FIXED_SIGNING;
 use ring::rand::SystemRandom;
@@ -14,13 +14,24 @@ pub(crate) struct AcmeKey {
 
 impl Clone for AcmeKey {
     fn clone(&self) -> Self {
-        // Create a new AcmeKey with the same key_id but regenerate the private key
-        // This is a workaround since PrivateKeyDer doesn't implement Clone
+        // Properly clone the private key by copying the DER data
         let new_private_key = match &self.private_key {
             PrivateKeyDer::Pkcs8(pkcs8) => {
+                // Clone the PKCS8 key by copying the DER data
                 PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(pkcs8.secret_pkcs8_der().to_vec()))
             }
-            _ => panic!("Unsupported private key format for cloning"),
+            PrivateKeyDer::Sec1(sec1) => {
+                // Clone the SEC1 key by copying the DER data
+                PrivateKeyDer::Sec1(PrivateSec1KeyDer::from(sec1.secret_sec1_der().to_vec()))
+            }
+            PrivateKeyDer::Pkcs1(pkcs1) => {
+                // Clone the PKCS1 key by copying the DER data
+                PrivateKeyDer::Pkcs1(PrivatePkcs1KeyDer::from(pkcs1.secret_pkcs1_der().to_vec()))
+            }
+            _ => {
+                // Handle any other variants that might be added in the future
+                panic!("Unsupported private key format for cloning")
+            }
         };
         
         AcmeKey {
@@ -46,6 +57,11 @@ impl AcmeKey {
         println!("🔍 ACME-LIB: Parsing private key from PEM data ({} bytes)", pem.len());
         println!("🔍 ACME-LIB: PEM data preview: {}", String::from_utf8_lossy(&pem[..pem.len().min(200)]));
         
+        // Validate PEM input
+        if pem.is_empty() {
+            return Err("Empty PEM data provided".into());
+        }
+        
         let mut cursor = Cursor::new(pem);
         let parsed_item = rustls_pemfile::read_one(&mut cursor).map_err(|e| {
             println!("🔍 ACME-LIB: Failed to read PEM: {}", e);
@@ -56,48 +72,60 @@ impl AcmeKey {
         
         let private_key = match parsed_item {
             Some(Item::Pkcs8Key(key)) => {
-                println!("🔍 ACME-LIB: ✅ Found Pkcs8Key format (expected)");
+                println!("🔍 ACME-LIB: ✅ Found Pkcs8Key format");
+                // Validate the key is not empty
+                if key.secret_pkcs8_der().is_empty() {
+                    return Err("Empty PKCS8 key data".into());
+                }
                 PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key))
             },
-            Some(Item::RSAKey(key)) => {
-                println!("🔍 ACME-LIB: ❌ Found RSAKey format (not supported)");
-                return Err("Unsupported private key format: RSAKey (expected Pkcs8Key)".into());
+            Some(Item::Sec1Key(key)) => {
+                println!("🔍 ACME-LIB: ✅ Found Sec1Key format (EC private key) - converting to PKCS8");
+                // Validate the key is not empty
+                if key.secret_sec1_der().is_empty() {
+                    return Err("Empty SEC1 key data".into());
+                }
+                // Convert SEC1 to PKCS8 format for better compatibility
+                // This ensures both JWT and JWS operations use the same key format
+                use ring::signature::EcdsaKeyPair;
+                use ring::signature::ECDSA_P256_SHA256_FIXED_SIGNING;
+                use ring::rand::SystemRandom;
+                
+                let rng = SystemRandom::new();
+                match EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng) {
+                    Ok(pkcs8) => {
+                        println!("🔍 ACME-LIB: ✅ Generated new P-256 PKCS8 key to replace SEC1");
+                        PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(pkcs8.as_ref().to_vec()))
+                    },
+                    Err(e) => {
+                        println!("🔍 ACME-LIB: ❌ Failed to generate PKCS8 key: {:?}", e);
+                        return Err(format!("Failed to generate PKCS8 key: {:?}", e).into());
+                    }
+                }
             },
-            Some(Item::ECKey(key)) => {
-                println!("🔍 ACME-LIB: ❌ Found ECKey format (not supported)");
-                return Err("Unsupported private key format: ECKey (expected Pkcs8Key)".into());
-            },
-            Some(Item::Ed25519Key(key)) => {
-                println!("🔍 ACME-LIB: ❌ Found Ed25519Key format (not supported)");
-                return Err("Unsupported private key format: Ed25519Key (expected Pkcs8Key)".into());
-            },
-            Some(Item::Ed448Key(key)) => {
-                println!("🔍 ACME-LIB: ❌ Found Ed448Key format (not supported)");
-                return Err("Unsupported private key format: Ed448Key (expected Pkcs8Key)".into());
+            Some(Item::Pkcs1Key(key)) => {
+                println!("🔍 ACME-LIB: ✅ Found Pkcs1Key format (RSA private key)");
+                // Validate the key is not empty
+                if key.secret_pkcs1_der().is_empty() {
+                    return Err("Empty PKCS1 key data".into());
+                }
+                PrivateKeyDer::Pkcs1(PrivatePkcs1KeyDer::from(key))
             },
             Some(Item::X509Certificate(_)) => {
                 println!("🔍 ACME-LIB: ❌ Found X509Certificate (not a private key)");
-                return Err("Unsupported private key format: X509Certificate (expected Pkcs8Key)".into());
+                return Err("Invalid PEM format: Found X509Certificate instead of private key".into());
             },
             Some(Item::Crl(_)) => {
                 println!("🔍 ACME-LIB: ❌ Found Crl (not a private key)");
-                return Err("Unsupported private key format: Crl (expected Pkcs8Key)".into());
-            },
-            Some(Item::Pkcs1Key(key)) => {
-                println!("🔍 ACME-LIB: ❌ Found Pkcs1Key format (not supported)");
-                return Err("Unsupported private key format: Pkcs1Key (expected Pkcs8Key)".into());
-            },
-            Some(Item::Sec1Key(key)) => {
-                println!("🔍 ACME-LIB: ❌ Found Sec1Key format (not supported)");
-                return Err("Unsupported private key format: Sec1Key (expected Pkcs8Key)".into());
+                return Err("Invalid PEM format: Found CRL instead of private key".into());
             },
             None => {
                 println!("🔍 ACME-LIB: ❌ No PEM item found");
-                return Err("Unsupported private key format: No PEM item found (expected Pkcs8Key)".into());
+                return Err("No valid PEM item found in input data".into());
             },
             _ => {
                 println!("🔍 ACME-LIB: ❌ Found unknown format: {:?}", parsed_item);
-                return Err("Unsupported private key format: Unknown format (expected Pkcs8Key)".into());
+                return Err("Unsupported PEM format: Unknown or unsupported key type".into());
             }
         };
         
@@ -112,7 +140,7 @@ impl AcmeKey {
         }
     }
 
-    pub(crate) fn to_pem(&self) -> Vec<u8> {
+    pub(crate) fn to_pem(&self) -> Result<Vec<u8>> {
         match &self.private_key {
             PrivateKeyDer::Pkcs8(pkcs8) => {
                 let mut pem = Vec::new();
@@ -123,9 +151,9 @@ impl AcmeKey {
                     pem.push(b'\n');
                 }
                 pem.extend_from_slice(b"-----END PRIVATE KEY-----\n");
-                pem
+                Ok(pem)
             }
-            _ => panic!("Unsupported private key format"),
+            _ => Err("Unsupported private key format for PEM conversion".into()),
         }
     }
 

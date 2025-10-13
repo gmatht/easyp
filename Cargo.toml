@@ -15,19 +15,26 @@ base64 = "0.22"
 jiff = "0.2"
 lazy_static = "1"
 log = "0.4"
-rustls = "0.23"
+#rustls = "0.23"
+rustls = { path="../rustls" }
 rustls-pemfile = "2.0"
-rustls-pki-types = "1.0"
+rustls-pki-types = "1.12"
 x509-parser = "0.18"
 pem = "3.0"
 ring = "0.17"
 rcgen = "0.14"
+rand = "0.8"
+rsa = { version = "0.9", features = ["sha2"], default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-ureq = "3.0.0-rc4"
+minreq = { version = "2.14", features = ["https-rustls"] }
+
+# Force minreq to use our local rustls version
+[patch.crates-io]
+rustls = { path = "../rustls" }
 
 [dev-dependencies]
 env_logger = { version = "0.11", default-features = false }
 futures = "0.3"
-regex = "1.3"
+# regex removed - using simple string operations instead
 hex = "0.4"

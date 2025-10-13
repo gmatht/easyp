@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 lazy_static! {
-    static ref RE_URL: regex::Regex = regex::Regex::new("<URL>").unwrap();
+    // Removed regex dependency - using simple string replacement instead
 }
 
 pub struct TestServer {
@@ -239,6 +239,6 @@ pub fn with_directory_server() -> TestServer {
 #[test]
 pub fn test_make_directory() {
     let server = with_directory_server();
-    let res = ureq::get(&server.dir_url).call();
+    let res = minreq::get(&server.dir_url).send();
     assert!(res.is_ok());
 }

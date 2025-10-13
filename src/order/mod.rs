@@ -21,7 +21,7 @@ use rustls_pki_types::PrivateKeyDer;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use ureq::{http, Body};
+use crate::req::{Response, Body};
 
 use crate::acc::AccountInner;
 use crate::api::{ApiAuth, ApiEmptyString, ApiFinalize, ApiOrder};
@@ -71,17 +71,16 @@ pub(crate) fn refresh_order<P: Persist>(
 }
 
 #[cfg(not(test))]
-fn api_order_of(res: http::Response<Body>, _want_status: &str) -> Result<ApiOrder> {
+fn api_order_of(res: Response, _want_status: &str) -> Result<ApiOrder> {
     read_json(res)
 }
 
 #[cfg(test)]
 // our test rig requires the order to be in `want_status`
-fn api_order_of(mut res: http::Response<Body>, want_status: &str) -> Result<ApiOrder> {
+fn api_order_of(mut res: Response, want_status: &str) -> Result<ApiOrder> {
     let s = res.body_mut().read_to_string().map_err(|e| e.into_io())?;
     #[allow(clippy::trivial_regex)]
-    let re = regex::Regex::new("<STATUS>").unwrap();
-    let b = re.replace_all(&s, want_status).to_string();
+    let b = s.replace("<STATUS>", want_status);
     let api_order: ApiOrder = serde_json::from_str(&b)?;
     Ok(api_order)
 }
@@ -223,7 +222,7 @@ impl<P: Persist> CsrOrder<P> {
             },
             other => {
                 println!("🔍 ACME-LIB: ❌ Unsupported private key format in order: {:?}", other);
-                return Err("Unsupported private key format".into());
+                return Err(format!("Unsupported private key format: {:?}", other).into());
             }
         };
         self.finalize_pkey(private_key, delay_millis)
@@ -331,14 +330,14 @@ impl<P: Persist> CertOrder<P> {
                 pem.extend_from_slice(b"-----END PRIVATE KEY-----\n");
                 pem
             }
-            _ => panic!("Unsupported private key format"),
+            _ => return Err("Unsupported private key format for PEM conversion".into()),
         };
         
         let pkey_pem = String::from_utf8_lossy(&pkey_pem_bytes);
         debug!("Save private key: {}", pk_key);
         persist.put(&pk_key, &pkey_pem_bytes)?;
 
-        let cert = res.body_mut().read_to_string().map_err(|e| e.into_io())?;
+        let cert = res.body_mut().read_to_string().map_err(|e| crate::Error::from(e))?;
         let pk_crt = PersistKey::new(realm, PersistKind::Certificate, &primary_name);
         debug!("Save certificate: {}", pk_crt);
         persist.put(&pk_crt, cert.as_bytes())?;
@@ -407,7 +406,7 @@ mod test {
         let cert2 = acc.certificate("acmetest.example.com")?.unwrap();
         assert_eq!(cert.private_key(), cert2.private_key());
         assert_eq!(cert.certificate(), cert2.certificate());
-        assert_eq!(cert.valid_days_left(), 89);
+        assert_eq!(cert.valid_days_left().unwrap(), 89);
 
         Ok(())
     }

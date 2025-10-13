@@ -135,7 +135,7 @@ impl<P: Persist> Directory<P> {
         // If we did create a new key, save it back to the persistence.
         if is_new {
             debug!("Persist acme account key");
-            let pem = transport.acme_key().to_pem();
+            let pem = transport.acme_key().to_pem()?;
             self.persist().put(&pem_key, &pem)?;
         }
 
@@ -191,8 +191,8 @@ mod test {
         let acc1 = dir.account("foo@bar.com")?;
         let acc2 = dir.account("foo@bar.com")?;
         let acc3 = dir.account("karlfoo@bar.com")?;
-        assert_eq!(acc1.acme_private_key_pem(), acc2.acme_private_key_pem());
-        assert!(acc1.acme_private_key_pem() != acc3.acme_private_key_pem());
+        assert_eq!(acc1.acme_private_key_pem().unwrap(), acc2.acme_private_key_pem().unwrap());
+        assert!(acc1.acme_private_key_pem().unwrap() != acc3.acme_private_key_pem().unwrap());
         Ok(())
     }
 

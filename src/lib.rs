@@ -146,7 +146,7 @@
 //!
 //! It is written by following the
 //! [ACME draft spec 18](https://tools.ietf.org/html/draft-ietf-acme-acme-18), and relies
-//! heavily on the [openssl](https://docs.rs/openssl/) crate to make JWK/JWT and sign requests
+//! heavily on the [rustls](https://docs.rs/rustls/) and [ring](https://docs.rs/ring/) crates to make JWK/JWT and sign requests
 //! to the API.
 //!
 #[macro_use]

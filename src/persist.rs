@@ -146,17 +146,20 @@ impl Persist for FilePersist {
     #[cfg(unix)]
     fn put(&self, key: &PersistKey, value: &[u8]) -> Result<()> {
         let f_name = file_name_of(&self.dir, key);
-        match key.kind {
+        println!("f_name vvvv: {:?}", &f_name);
+        let ret = match key.kind {
             PersistKind::AccountPrivateKey | PersistKind::PrivateKey => fs::OpenOptions::new()
                 .mode(0o600)
                 .write(true)
                 .truncate(true)
                 .create(true)
-                .open(f_name)?
+                .open(&f_name)?
                 .write_all(value)
                 .map_err(Error::from),
-            PersistKind::Certificate => fs::write(f_name, value).map_err(Error::from),
-        }
+            PersistKind::Certificate => fs::write(&f_name, value).map_err(Error::from),
+        };
+        println!("f_name ^^^^^: {:?}", f_name);
+        ret
     }
 
     fn get(&self, key: &PersistKey) -> Result<Option<Vec<u8>>> {

@@ -2,7 +2,7 @@ use ring::signature::{EcdsaKeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
-use ureq::{http, Body};
+use crate::req::{Response, Body};
 
 use crate::acc::AcmeKey;
 use crate::jwt::*;
@@ -47,12 +47,12 @@ impl Transport {
         &self,
         url: &str,
         body: &T,
-    ) -> Result<http::Response<Body>> {
+    ) -> Result<Response> {
         self.do_call(url, body, jws_with_jwk)
     }
 
     /// Make call using the key id
-    pub fn call<T: Serialize + ?Sized>(&self, url: &str, body: &T) -> Result<http::Response<Body>> {
+    pub fn call<T: Serialize + ?Sized>(&self, url: &str, body: &T) -> Result<Response> {
         self.do_call(url, body, jws_with_kid)
     }
 
@@ -61,7 +61,7 @@ impl Transport {
         url: &str,
         body: &T,
         make_body: F,
-    ) -> Result<http::Response<Body>> {
+    ) -> Result<Response> {
         // The ACME API may at any point invalidate all nonces. If we detect such an
         // error, we loop until the server accepts the nonce.
         loop {
@@ -116,7 +116,7 @@ impl NoncePool {
         }
     }
 
-    fn extract_nonce(&self, res: &std::result::Result<http::Response<Body>, ureq::Error>) {
+    fn extract_nonce(&self, res: &std::result::Result<Response, crate::req::Error>) {
         let res = match res {
             Ok(res) => res,
             _ => return,
@@ -125,10 +125,7 @@ impl NoncePool {
         if let Some(nonce) = res.headers().get("replay-nonce") {
             trace!("Extract nonce");
             let mut pool = self.pool.lock().unwrap();
-            let nonce = match nonce.to_str() {
-                Ok(v) => v,
-                _ => return,
-            };
+            let nonce = nonce.as_str();
             pool.push_back(nonce.to_string());
             if pool.len() > 10 {
                 pool.pop_front();
@@ -208,25 +205,34 @@ fn jws_with<T: Serialize + ?Sized>(
     // Get the private key and create EcdsaKeyPair
     let private_key = key.private_key();
     let pkcs8 = match private_key {
-        rustls_pki_types::PrivateKeyDer::Pkcs8(pkcs8) => pkcs8.secret_pkcs8_der(),
-        _ => panic!("Unsupported private key format for signing"),
+        rustls_pki_types::PrivateKeyDer::Pkcs8(pkcs8) => {
+            println!("🔍 ACME-LIB: ✅ Using PKCS8 format for JWS signing");
+            pkcs8.secret_pkcs8_der().to_vec()
+        },
+        _ => {
+            println!("🔍 ACME-LIB: ❌ Unsupported private key format for JWS signing: {:?}", private_key);
+            return Err("Unsupported private key format for JWS signing".into());
+        },
     };
     
     use ring::rand::SystemRandom;
     
     let rng = SystemRandom::new();
-    let key_pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8, &rng)
-        .expect("Failed to create EcdsaKeyPair");
+    let key_pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &pkcs8, &rng)
+        .map_err(|e| format!("Failed to create EcdsaKeyPair: {:?}", e))?;
     
     // Sign the digest
-    let signature = key_pair.sign(&rng, to_sign.as_bytes()).expect("Failed to sign");
+    let signature = key_pair.sign(&rng, to_sign.as_bytes())
+        .map_err(|e| format!("Failed to sign: {:?}", e))?;
     let signature_bytes = signature.as_ref();
     
     // For ECDSA P-256, the signature is 64 bytes: 32 bytes r + 32 bytes s
     if signature_bytes.len() != 64 {
-        panic!("Invalid ECDSA signature length");
+        return Err("Invalid ECDSA signature length".into());
     }
     
+    // Ring already returns the signature in the correct format (r || s)
+    // which matches what OpenSSL was doing manually
     let signature = base64url(signature_bytes);
 
     let jws = Jws::new(protected, payload, signature);

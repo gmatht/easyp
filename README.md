@@ -1,5 +1,7 @@
 # acme-lib
 
+*This is a fork of the original acme-lib to replace the OpenSSL dependancy with the more Rusty rustls dependancy. Original README follows*
+
 acme-lib is a library for accessing ACME (Automatic Certificate Management Environment)
 services such as [Let's Encrypt](https://letsencrypt.org/).
 
@@ -150,7 +152,7 @@ synchronous I/O and blocking cals. This doesn't rule out a futures based version
 
 It is written by following the
 [ACME draft spec 18](https://tools.ietf.org/html/draft-ietf-acme-acme-18), and relies
-heavily on the [openssl](https://docs.rs/openssl/) crate to make JWK/JWT and sign requests
+heavily on the [rustls](https://docs.rs/rustls/) and [ring](https://docs.rs/ring/) crates to make JWK/JWT and sign requests
 to the API.
 
 
