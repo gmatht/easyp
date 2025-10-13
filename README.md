@@ -3,9 +3,16 @@
 | ![Logo](website/static/easyp.png) | I gave up trying to configure off-the-shelf webservers and decided it would be easier to just write my own that just automatically configured itself. This prototype should just work, provided you have already set up Lets Encrypt. <br><br>It supports extensions written in Rust, and comes with some default examples. Just add/remove extension `.rs` files to/from `extensions/` and run `cargo build --release` to get a single binary staticly linked with all your extensions. Then just run that binary on your server or run the `deploy.sh` script to set up systemd etc.<br> |
 |:---:|:---|
 
-At this point it should just work, and if it doesn't work on Linux it is a bug; however, no benchmarking has been done and only the most cursory security analysis.
+At this point it should just work, and if it doesn't work on Linux it is a bug; however, little benchmarking has been done and only the most cursory security analysis.
 
 The easyp pea says: *My favourite type of pea is easyp easy HTT Ps*
+
+> **Note**: This repository is a wrapper around the core easyp components. For easier access to binaries and source code bundle, visit the official website at [www.easyp.net](https://www.easyp.net). Alternatively download this and the four other core components from GitHub:
+> - [acme-lib](https://github.com/gmatht/acme-lib)
+> - [easyp-crate](https://github.com/gmatht/easyp-crate) 
+> - [rustls-acme](https://github.com/gmatht/rustls-acme)
+> - [tokio-rustls](https://github.com/gmatht/tokio-rustls)
+
 
 ## Features
 
