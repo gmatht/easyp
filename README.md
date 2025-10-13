@@ -1,6 +1,6 @@
 # easyp HTTPS Server
 
-| ![Logo](logo.png) | I gave up trying to configure off-the-shelf webservers and decided it would be easier to just write my own that just automatically configured itself. This prototype should just work, provided you have already set up Lets Encrypt. <br><br>It supports extensions written in Rust, and comes with some default examples. Just add/remove extension `.rs` files to/from `extensions/` and run `cargo build --release` to get a single binary staticly linked with all your extensions. Then just run that binary on your server or run the `deploy.sh` script to set up systemd etc.<br> |
+| ![Logo](website/static/easyp.png) | I gave up trying to configure off-the-shelf webservers and decided it would be easier to just write my own that just automatically configured itself. This prototype should just work, provided you have already set up Lets Encrypt. <br><br>It supports extensions written in Rust, and comes with some default examples. Just add/remove extension `.rs` files to/from `extensions/` and run `cargo build --release` to get a single binary staticly linked with all your extensions. Then just run that binary on your server or run the `deploy.sh` script to set up systemd etc.<br> |
 |:---:|:---|
 
 At this point it should just work, and if it doesn't work on Linux it is a bug; however, no benchmarking has been done and only the most cursory security analysis.
@@ -428,3 +428,4 @@ The GPLv3 is liberal enough for what most normal people would want to do with a 
 - Use Async/Await properly, don't fallback on polling.
 - Check that configuration options really work. I have mostly just tested auto-ACME mode without special configuration.
 - Detect file encoding (UTF8 vs UTF16 etc.) support unknown file types?
+
