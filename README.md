@@ -27,10 +27,9 @@ The easyp pea says: *My favourite type of pea is easyp easy HTT Ps*
 
 ## Requirements
 
-- Rust 1.70+
 - Let's Encrypt certificates in `/etc/letsencrypt/live/` (or use auto-ACME mode)
 - Document roots in `/var/www/{domain}/` or common directory `/var/www/html`
-- Root privileges to bind to port 443
+- Root privileges to bind to port 80 and 443 (you can use other ports but auto-ACME require port 80)
 
 ## Extension System
 
