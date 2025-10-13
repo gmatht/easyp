@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="{{ .Site.LanguageCode | default "en" }}">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ if .Title }}{{ .Title }} - {{ end }}{{ .Site.Title }}</title>
+  <link rel="stylesheet" href="/style.css">
+  {{ with .OutputFormats.Get "HTMLFeed" }}
+  <link rel="alternate" type="text/html" href="{{ .Permalink }}" title="{{ $.Site.Title }} Feed">
+  {{ end }}
+</head>
+<body>
+  <header class="main-header">
+    <a href=".."><img id="baby-logo" src="/easyp.png" alt="Easyp Logo"></a>
+    <div class="title-container">
+      <h1 class="main-title">Easyp Easy HTTPS Server</h1>
+      <p class="pea-quote">The easyp pea says: <em>My favourite peas are easy HTTPS</em></p>
+    </div>
+    <img id="baby-logo-reflected" src="/easyp.png" alt="Easyp Logo Reflected">
+  </header>
+  {{ block "main" . }}{{ end }}
+</body>
+</html>

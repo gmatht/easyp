@@ -1,0 +1,282 @@
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+use core::fmt::Debug;
+
+use pki_types::{AlgorithmIdentifier, CertificateDer, PrivateKeyDer, SubjectPublicKeyInfoDer};
+
+use super::CryptoProvider;
+use crate::client::ResolvesClientCert;
+use crate::enums::{SignatureAlgorithm, SignatureScheme};
+use crate::error::{ApiMisuse, Error, InconsistentKeys, PeerIncompatible};
+use crate::server::{ClientHello, ParsedCertificate, ResolvesServerCert};
+use crate::sync::Arc;
+use crate::x509;
+
+/// An abstract signing key.
+///
+/// This interface is used by rustls to use a private signing key
+/// for authentication.  This includes server and client authentication.
+///
+/// Objects of this type are always used within Rustls as
+/// `Arc<dyn SigningKey>`. There are no concrete public structs in Rustls
+/// that implement this trait.
+///
+/// You can obtain a `SigningKey` by calling the [`KeyProvider::load_private_key()`]
+/// method, which is usually referenced via [`CryptoProvider::key_provider`].
+///
+/// The `KeyProvider` method `load_private_key()` is called under the hood by
+/// [`ConfigBuilder::with_single_cert()`],
+/// [`ConfigBuilder::with_client_auth_cert()`], and
+/// [`ConfigBuilder::with_single_cert_with_ocsp()`].
+///
+/// A signing key created outside of the `KeyProvider` extension trait can be used
+/// to create a [`CertifiedKey`], which in turn can be used to create a
+/// [`ResolvesServerCertUsingSni`]. Alternately, a `CertifiedKey` can be returned from a
+/// custom implementation of the [`ResolvesServerCert`] or [`ResolvesClientCert`] traits.
+///
+/// [`KeyProvider::load_private_key()`]: crate::crypto::KeyProvider::load_private_key
+/// [`ConfigBuilder::with_single_cert()`]: crate::ConfigBuilder::with_single_cert
+/// [`ConfigBuilder::with_single_cert_with_ocsp()`]: crate::ConfigBuilder::with_single_cert_with_ocsp
+/// [`ConfigBuilder::with_client_auth_cert()`]: crate::ConfigBuilder::with_client_auth_cert
+/// [`ResolvesServerCertUsingSni`]: crate::server::ResolvesServerCertUsingSni
+/// [`ResolvesServerCert`]: crate::server::ResolvesServerCert
+/// [`ResolvesClientCert`]: crate::client::ResolvesClientCert
+pub trait SigningKey: Debug + Send + Sync {
+    /// Choose a `SignatureScheme` from those offered.
+    ///
+    /// Expresses the choice by returning something that implements `Signer`,
+    /// using the chosen scheme.
+    fn choose_scheme(&self, offered: &[SignatureScheme]) -> Option<Box<dyn Signer>>;
+
+    /// Get the RFC 5280-compliant SubjectPublicKeyInfo (SPKI) of this [`SigningKey`].
+    ///
+    /// If an implementation does not have the ability to derive this,
+    /// it can return `None`.
+    fn public_key(&self) -> Option<SubjectPublicKeyInfoDer<'_>>;
+
+    /// What kind of key we have.
+    fn algorithm(&self) -> SignatureAlgorithm;
+}
+
+/// A thing that can sign a message.
+pub trait Signer: Debug + Send + Sync {
+    /// Signs `message` using the selected scheme.
+    ///
+    /// `message` is not hashed; the implementer must hash it using the hash function
+    /// implicit in [`Self::scheme()`].
+    ///
+    /// The returned signature format is also defined by [`Self::scheme()`].
+    fn sign(self: Box<Self>, message: &[u8]) -> Result<Vec<u8>, Error>;
+
+    /// Reveals which scheme will be used when you call [`Self::sign()`].
+    fn scheme(&self) -> SignatureScheme;
+}
+
+/// Server certificate resolver which always resolves to the same certificate and key.
+///
+/// For use with [`ConfigBuilder::with_cert_resolver()`].
+///
+/// [`ConfigBuilder::with_cert_resolver()`]: crate::ConfigBuilder::with_cert_resolver
+#[derive(Debug)]
+pub struct SingleCertAndKey(CertifiedKey);
+
+impl From<CertifiedKey> for SingleCertAndKey {
+    fn from(certified_key: CertifiedKey) -> Self {
+        Self(certified_key)
+    }
+}
+
+impl ResolvesClientCert for SingleCertAndKey {
+    fn resolve(
+        &self,
+        _root_hint_subjects: &[&[u8]],
+        sig_schemes: &[SignatureScheme],
+    ) -> Option<CertifiedSigner> {
+        self.0.signer(sig_schemes)
+    }
+
+    fn has_certs(&self) -> bool {
+        true
+    }
+}
+
+impl ResolvesServerCert for SingleCertAndKey {
+    fn resolve(&self, client_hello: &ClientHello<'_>) -> Result<CertifiedSigner, Error> {
+        self.0
+            .signer(client_hello.signature_schemes())
+            .ok_or(Error::PeerIncompatible(
+                PeerIncompatible::NoSignatureSchemesInCommon,
+            ))
+    }
+}
+
+/// A packaged-together certificate chain and one-time-use signer.
+///
+/// This is used in the [`ResolvesClientCert`] and [`ResolvesClientCert`] traits
+/// as the return value of their `resolve()` methods.
+#[non_exhaustive]
+#[derive(Debug)]
+pub struct CertifiedSigner {
+    /// A one-time-use signer for this certificate.
+    pub signer: Box<dyn Signer>,
+    /// The certificate chain or raw public key.
+    pub cert_chain: Arc<[CertificateDer<'static>]>,
+    /// An optional OCSP response from the certificate issuer,
+    /// attesting to its continued validity.
+    pub ocsp: Option<Arc<[u8]>>,
+}
+
+/// A packaged-together certificate chain, matching `SigningKey` and
+/// optional stapled OCSP response.
+///
+/// Note: this struct is also used to represent an [RFC 7250] raw public key,
+/// when the client/server is configured to use raw public keys instead of
+/// certificates.
+///
+/// [RFC 7250]: https://tools.ietf.org/html/rfc7250
+#[non_exhaustive]
+#[derive(Debug)]
+pub struct CertifiedKey {
+    /// The certificate chain or raw public key.
+    pub cert_chain: Arc<[CertificateDer<'static>]>,
+
+    /// The certified key.
+    pub key: Box<dyn SigningKey>,
+
+    /// An optional OCSP response from the certificate issuer,
+    /// attesting to its continued validity.
+    pub ocsp: Option<Arc<[u8]>>,
+}
+
+impl CertifiedKey {
+    /// Create a new `CertifiedKey` from a certificate chain and DER-encoded private key.
+    ///
+    /// Attempt to parse the private key with the given [`CryptoProvider`]'s [`KeyProvider`] and
+    /// verify that it matches the public key in the first certificate of the `cert_chain`
+    /// if possible.
+    ///
+    /// [`KeyProvider`]: crate::crypto::KeyProvider
+    pub fn from_der(
+        cert_chain: Arc<[CertificateDer<'static>]>,
+        key: PrivateKeyDer<'static>,
+        provider: &CryptoProvider,
+    ) -> Result<Self, Error> {
+        Self::new(
+            cert_chain,
+            provider
+                .key_provider
+                .load_private_key(key)?,
+        )
+    }
+
+    /// Make a new CertifiedKey, with the given chain and key.
+    ///
+    /// The cert chain must not be empty. The first certificate in the chain
+    /// must be the end-entity certificate. The end-entity certificate's
+    /// subject public key info must match that of the `key`'s public key.
+    /// If the `key` does not have a public key, this will return an
+    /// `InconsistentKeys::Unknown` error.
+    ///
+    /// This constructor should be used with all [`SigningKey`] implementations
+    /// that can provide a public key, including those provided by rustls itself.
+    pub fn new(
+        cert_chain: Arc<[CertificateDer<'static>]>,
+        key: Box<dyn SigningKey>,
+    ) -> Result<Self, Error> {
+        let parsed = ParsedCertificate::try_from(
+            cert_chain
+                .first()
+                .ok_or(ApiMisuse::EmptyCertificateChain)?,
+        )?;
+
+        match (key.public_key(), parsed.subject_public_key_info()) {
+            (None, _) => Err(Error::InconsistentKeys(InconsistentKeys::Unknown)),
+            (Some(key_spki), cert_spki) if key_spki != cert_spki => {
+                Err(Error::InconsistentKeys(InconsistentKeys::KeyMismatch))
+            }
+            _ => Ok(Self {
+                cert_chain,
+                key,
+                ocsp: None,
+            }),
+        }
+    }
+
+    /// Make a new `CertifiedKey` from a raw private key.
+    ///
+    /// Unlike [`CertifiedKey::new()`], this does not check that the end-entity certificate's
+    /// subject key matches `key`'s public key.
+    ///
+    /// This avoids parsing the end-entity certificate, which is useful when using client
+    /// certificates that are not fully standards compliant, but known to usable by the peer.
+    pub fn new_unchecked(
+        cert_chain: Arc<[CertificateDer<'static>]>,
+        key: Box<dyn SigningKey>,
+    ) -> Self {
+        Self {
+            cert_chain,
+            key,
+            ocsp: None,
+        }
+    }
+
+    /// Verify the consistency of this [`CertifiedKey`]'s public and private keys.
+    /// This is done by performing a comparison of SubjectPublicKeyInfo bytes.
+    pub fn keys_match(&self) -> Result<(), Error> {
+        let Some(key_spki) = self.key.public_key() else {
+            return Err(InconsistentKeys::Unknown.into());
+        };
+
+        let cert = ParsedCertificate::try_from(self.end_entity_cert()?)?;
+        match key_spki == cert.subject_public_key_info() {
+            true => Ok(()),
+            false => Err(InconsistentKeys::KeyMismatch.into()),
+        }
+    }
+
+    /// Attempt to produce a `CertifiedSigner` using one of the given signature schemes.
+    ///
+    /// Calls [`SigningKey::choose_scheme()`] and propagates `cert_chain` and `ocsp`.
+    pub fn signer(&self, sig_schemes: &[SignatureScheme]) -> Option<CertifiedSigner> {
+        Some(CertifiedSigner {
+            signer: self.key.choose_scheme(sig_schemes)?,
+            cert_chain: self.cert_chain.clone(),
+            ocsp: self.ocsp.clone(),
+        })
+    }
+
+    /// The end-entity certificate.
+    pub fn end_entity_cert(&self) -> Result<&CertificateDer<'_>, Error> {
+        self.cert_chain
+            .first()
+            .ok_or(Error::ApiMisuse(ApiMisuse::EmptyCertificateChain))
+    }
+}
+
+/// Convert a public key and algorithm identifier into [`SubjectPublicKeyInfoDer`].
+///
+/// In the returned encoding, `alg_id` is used as the `algorithm` field, and `public_key` is
+/// wrapped inside an ASN.1 `BIT STRING` and then used as the `subjectPublicKey` field.
+pub fn public_key_to_spki(
+    alg_id: &AlgorithmIdentifier,
+    public_key: impl AsRef<[u8]>,
+) -> SubjectPublicKeyInfoDer<'static> {
+    // SubjectPublicKeyInfo  ::=  SEQUENCE  {
+    //    algorithm            AlgorithmIdentifier,
+    //    subjectPublicKey     BIT STRING  }
+    //
+    // AlgorithmIdentifier  ::=  SEQUENCE  {
+    //    algorithm               OBJECT IDENTIFIER,
+    //    parameters              ANY DEFINED BY algorithm OPTIONAL  }
+    //
+    // note that the `pki_types::AlgorithmIdentifier` type is the
+    // concatenation of `algorithm` and `parameters`, but misses the
+    // outer `Sequence`.
+
+    let mut spki_inner = x509::wrap_in_sequence(alg_id.as_ref());
+    spki_inner.extend(&x509::wrap_in_bit_string(public_key.as_ref()));
+
+    let spki = x509::wrap_in_sequence(&spki_inner);
+
+    SubjectPublicKeyInfoDer::from(spki)
+}

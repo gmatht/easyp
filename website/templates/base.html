@@ -1,0 +1,20 @@
+<html>
+  <head>
+    <title>rustls: {{ page.title | default (value="a modern TLS library written in Rust") }}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="UTF-8">
+    <link rel="stylesheet" href="/style.css">
+    {{ with .OutputFormats.Get "HTMLFeed" }}
+    <link rel="alternate" type="text/html" href="{{ .Permalink }}" title="{{ $.Site.Title }} Feed">
+    {{ end }}
+  </head>
+  <body>
+  <a href=".."><img id="baby-logo" src="/easyp.png"></a>
+  {{ block "lede" . }}{{ end }}
+  <div class="box">
+    <div class="content">
+      {{ block "content" . }}{{ end }}
+    </div>
+  </div>
+  </body>
+</html>

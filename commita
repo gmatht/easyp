@@ -1,0 +1,6 @@
+(cd acme-lib; git commit . -m "$*")
+(cd rustls-acme; git commit . -m "$*")
+(cd easyp-crate; commit . -m "$*")
+#(cd trillium-acme; git commit . -m "$@")
+git commit . -m "$*"
+

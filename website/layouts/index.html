@@ -1,0 +1,41 @@
+{{ define "main" }}
+<!--div class="subtitle">
+  The easyp easy HTTPS server written in Rust
+</div -->
+<section>
+<div class="box">
+  <div class="headline">
+    <h1>Simple</h1>
+    Easy to use with minimal configuration required.
+
+    <p>Just run <code>easyp</code> and you're ready to serve HTTPS with automatic certificate management.
+  </div>
+  <div class="headline">
+    <h1>Tiny</h1>
+    Minimal memory footprint and small binary size.
+
+    <p>Uses only 8.1 MB RSS compared to Apache's 36 MB. The entire binary is just 2.8MB.
+  </div>
+  <div class="headline">
+    <h1>Rusty</h1>
+    Built with Rust for memory safety and performance.
+
+    <p>Aiming for 100% pure Rust, with acme-lib rewritten to use rusty rustls.
+  </div>
+</div>
+<div class="box">
+  <div class="headline">
+    <h1>Quickstart (Linux):</h1>
+    <pre>curl www.easyp.net/easyp-0.1.2-x64.gz -o easyp.gz && gunzip easyp.gz && [  "$(sha256sum < easyp)" = "aea5971bda8959c73701ece1a2b14024a67ebb48c41bc5717f3274297fb6f07a  -" ] && chmod +x easyp && sudo ./easyp</pre>
+  </div>
+  <div class="headline">
+    <h1>Downloads:</h1>
+    <div class="download-links">
+      <a href="/easyp-latest.tgz" class="download-link">Source</a>
+      <a href="/easyp-latest-x64.gz" class="download-link">Linux x64</a>
+      <a href="/easyp-latest.zip" class="download-link">Windows x64</a>
+    </div>
+  </div>
+</div>
+</section>
+{{ end }}

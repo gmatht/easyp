@@ -1,0 +1,34 @@
+# Hugo configuration
+baseURL = "https://rustls.dev/"
+title = "rustls"
+languageCode = "en-us"
+
+# Disable default XML feeds
+disableKinds = ["RSS", "sitemap"]
+
+# Custom output format for HTML feeds
+[outputFormats.HTMLFeed]
+  mediaType = "text/html"
+  baseName = "feed"
+  isPlainText = false
+
+# Configure outputs for different page types
+[outputs]
+  home = ["HTML", "HTMLFeed"]
+  section = ["HTML", "HTMLFeed"]
+  taxonomy = ["HTML", "HTMLFeed"]
+  term = ["HTML", "HTMLFeed"]
+
+# Markdown configuration
+[markup]
+  [markup.highlight]
+    codeFences = true
+    noClasses = false
+
+# Taxonomies
+[taxonomies]
+  tags = "tags"
+
+# Params
+[params]
+  description = "A modern TLS library written in Rust"
