@@ -321,20 +321,20 @@ sudo journalctl -u easyp -f     # View logs
 
 The project includes optimized build profiles:
 
-- **Development**: Fast compilation with debug info
-- **Test**: Balanced optimization for testing
-- **Release**: Maximum optimization with LTO, size optimization, and stripped symbols
+- **Debug**: Fast compilation with debug info
+- **"Release"**: Maximum optimization
+- **LTO**: Maximum optimization with LTO, size optimization, and stripped symbols
 
 ### Binary Sizes
 - Debug build: ~62 MB
-- Release build: ~4.9 MB
+- "Release" build: ~4.9 MB
+- LTO build: ~2.8MB (used for release)
 
-The release profile uses:
+The LTO profile uses:
 - `lto = "fat"`: Full Link Time Optimization
 - `codegen-units = 1`: Single codegen unit for better optimization
 - `opt-level = "z"`: Optimize for size
 - `strip = true`: Remove debug symbols
-- `panic = "abort"`: Smaller binary size
 
 ## File Structure
 
