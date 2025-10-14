@@ -170,7 +170,7 @@ pub fn verify_tls12_signature(
     let mut error = None;
     for alg in possible_algs {
         match cert.verify_signature(*alg, input.message, input.signature.signature()) {
-            Err(err @ webpki::Error::UnsupportedSignatureAlgorithmForPublicKeyContext(_)) => {
+            Err(err @ webpki::Error::UnsupportedSignatureAlgorithmForPublicKey(_)) => {
                 error = Some(err);
                 continue;
             }
@@ -181,7 +181,10 @@ pub fn verify_tls12_signature(
 
     #[allow(deprecated)] // The `unwrap_or()` should be statically unreachable
     Err(pki_error(error.unwrap_or(
-        webpki::Error::UnsupportedSignatureAlgorithmForPublicKey,
+        webpki::Error::UnsupportedSignatureAlgorithmForPublicKey(webpki::UnsupportedSignatureAlgorithmForPublicKeyContext {
+            signature_algorithm_id: Vec::new(),
+            public_key_algorithm_id: Vec::new(),
+        }),
     )))
 }
 
@@ -243,7 +246,7 @@ pub(crate) fn verify_identity_signed_by_trust_anchor_impl(
         &roots.roots,
         intermediates,
         now,
-        webpki::KeyUsage::server_auth(),
+        &webpki::ExtendedKeyUsage::server_auth(),
         revocation,
         None,
     );

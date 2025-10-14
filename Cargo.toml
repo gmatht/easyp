@@ -80,10 +80,10 @@ rand = "0.8"
 rand_core = { version = "0.6", features = ["getrandom"] }
 rayon = "1.7"
 rcgen = { path = "rcgen/rcgen", features = ["pem", "ring"], default-features = false }
-ring = { path = "ring-wrapper" }
-ring-redox = { git = "https://gitlab.redox-os.org/redox-os/ring.git", rev = "fa98b490", package = "ring" }
+ring-wrapper = { path = "ring-wrapper", package = "ring" }
 rsa = { version = "0.9", features = ["sha2"], default-features = false }
 rustc-hash = "2"
+rustls = { path = "rustls" }
 rustls-graviola = { version = "0.2" }
 rustls-test = { path = "rustls-test/" }
 rustls-fuzzing-provider = { path = "rustls-fuzzing-provider/" }
@@ -97,6 +97,7 @@ tikv-jemallocator = "0.6"
 tempfile = "3.0"
 tokio = { version = "1.34", features = ["io-util", "macros", "net", "rt"] }
 webpki = { package = "rustls-webpki", path = "webpki", features = ["alloc"], default-features = false }
+rustls-webpki = { package = "rustls-webpki", path = "webpki", features = ["alloc"], default-features = false }
 webpki-roots = "1"
 x25519-dalek = "2"
 x509-parser = "0.18"

@@ -373,7 +373,7 @@ impl ClientVerifier for WebPkiClientVerifier {
                 &self.roots.roots,
                 &certificates.intermediates,
                 identity.now,
-                webpki::KeyUsage::client_auth(),
+                &webpki::ExtendedKeyUsage::client_auth(),
                 revocation,
                 None,
             )

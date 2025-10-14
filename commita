@@ -1,3 +1,10 @@
+ls ./.git */.git -d | sed s/..git$// | while read D
+do
+	echo $D
+	(cd $D; git commit . -m "$*")
+done
+exit
+
 (cd acme-lib; git commit . -m "$*")
 (cd rustls-acme; git commit . -m "$*")
 (cd easyp-crate; commit . -m "$*")

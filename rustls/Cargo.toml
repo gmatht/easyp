@@ -21,8 +21,8 @@ brotli = ["dep:brotli", "dep:brotli-decompressor", "std"]
 custom-provider = []
 fips = ["aws-lc-rs", "aws-lc-rs?/fips", "webpki/aws-lc-rs-fips"]
 log = ["dep:log"]
-ring = ["dep:ring"]
-redox = ["webpki/redox"]
+ring = ["dep:ring-wrapper", "webpki/ring"]
+redox = ["dep:ring-wrapper"]
 std = ["webpki/std", "pki-types/std", "once_cell/std"]
 zlib = ["dep:zlib-rs"]
 
@@ -34,7 +34,7 @@ hashbrown = { workspace = true, optional = true }
 log = { workspace = true, optional = true }
 # only required for no-std
 once_cell = { workspace = true }
-ring = { workspace = true, optional = true }
+ring-wrapper = { workspace = true, optional = true }
 subtle = { workspace = true }
 webpki = { workspace = true }
 pki-types = { workspace = true }

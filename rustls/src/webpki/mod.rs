@@ -5,7 +5,7 @@ use pki_types::CertificateRevocationListDer;
 use webpki::{CertRevocationList, InvalidNameContext, OwnedCertRevocationList};
 
 use crate::error::{
-    CertRevocationListError, CertificateError, Error, ExtendedKeyPurpose, OtherError,
+    CertRevocationListError, CertificateError, Error, OtherError,
 };
 #[cfg(feature = "std")]
 use crate::sync::Arc;
@@ -80,56 +80,30 @@ fn pki_error(error: webpki::Error) -> Error {
 
         InvalidSignatureForPublicKey => CertificateError::BadSignature.into(),
         #[allow(deprecated)]
-        UnsupportedSignatureAlgorithm | UnsupportedSignatureAlgorithmForPublicKey => {
+        UnsupportedSignatureAlgorithm(_) => {
             CertificateError::UnsupportedSignatureAlgorithm.into()
         }
-        UnsupportedSignatureAlgorithmContext(cx) => {
+        UnsupportedSignatureAlgorithmForPublicKey(_) => {
             CertificateError::UnsupportedSignatureAlgorithmContext {
-                signature_algorithm_id: cx.signature_algorithm_id,
-                supported_algorithms: cx.supported_algorithms,
-            }
-            .into()
-        }
-        UnsupportedSignatureAlgorithmForPublicKeyContext(cx) => {
-            CertificateError::UnsupportedSignatureAlgorithmForPublicKeyContext {
-                signature_algorithm_id: cx.signature_algorithm_id,
-                public_key_algorithm_id: cx.public_key_algorithm_id,
-            }
-            .into()
+                signature_algorithm_id: Vec::new(),
+                supported_algorithms: Vec::new(),
+            }.into()
         }
 
         InvalidCrlSignatureForPublicKey => CertRevocationListError::BadSignature.into(),
         #[allow(deprecated)]
-        UnsupportedCrlSignatureAlgorithm | UnsupportedCrlSignatureAlgorithmForPublicKey => {
+        UnsupportedCrlSignatureAlgorithm(_) => {
             CertRevocationListError::UnsupportedSignatureAlgorithm.into()
         }
-        UnsupportedCrlSignatureAlgorithmContext(cx) => {
+        UnsupportedCrlSignatureAlgorithmForPublicKey(_) => {
             CertRevocationListError::UnsupportedSignatureAlgorithmContext {
-                signature_algorithm_id: cx.signature_algorithm_id,
-                supported_algorithms: cx.supported_algorithms,
-            }
-            .into()
-        }
-        UnsupportedCrlSignatureAlgorithmForPublicKeyContext(cx) => {
-            CertRevocationListError::UnsupportedSignatureAlgorithmForPublicKeyContext {
-                signature_algorithm_id: cx.signature_algorithm_id,
-                public_key_algorithm_id: cx.public_key_algorithm_id,
-            }
-            .into()
+                signature_algorithm_id: Vec::new(),
+                supported_algorithms: Vec::new(),
+            }.into()
         }
 
         #[allow(deprecated)]
-        RequiredEkuNotFound => CertificateError::InvalidPurpose.into(),
-        RequiredEkuNotFoundContext(webpki::RequiredEkuNotFoundContext { required, present }) => {
-            CertificateError::InvalidPurposeContext {
-                required: ExtendedKeyPurpose::for_values(required.oid_values()),
-                presented: present
-                    .into_iter()
-                    .map(|eku| ExtendedKeyPurpose::for_values(eku.into_iter()))
-                    .collect(),
-            }
-            .into()
-        }
+        RequiredEkuNotFound(_) => CertificateError::InvalidPurpose.into(),
 
         _ => CertificateError::Other(OtherError(
             #[cfg(feature = "std")]
@@ -144,19 +118,13 @@ fn crl_error(e: webpki::Error) -> CertRevocationListError {
     match e {
         InvalidCrlSignatureForPublicKey => CertRevocationListError::BadSignature,
         #[allow(deprecated)]
-        UnsupportedCrlSignatureAlgorithm | UnsupportedCrlSignatureAlgorithmForPublicKey => {
+        UnsupportedCrlSignatureAlgorithm(_) => {
             CertRevocationListError::UnsupportedSignatureAlgorithm
         }
-        UnsupportedCrlSignatureAlgorithmContext(cx) => {
+        UnsupportedCrlSignatureAlgorithmForPublicKey(_) => {
             CertRevocationListError::UnsupportedSignatureAlgorithmContext {
-                signature_algorithm_id: cx.signature_algorithm_id,
-                supported_algorithms: cx.supported_algorithms,
-            }
-        }
-        UnsupportedSignatureAlgorithmForPublicKeyContext(cx) => {
-            CertRevocationListError::UnsupportedSignatureAlgorithmForPublicKeyContext {
-                signature_algorithm_id: cx.signature_algorithm_id,
-                public_key_algorithm_id: cx.public_key_algorithm_id,
+                signature_algorithm_id: Vec::new(),
+                supported_algorithms: Vec::new(),
             }
         }
         InvalidCrlNumber => CertRevocationListError::InvalidCrlNumber,
