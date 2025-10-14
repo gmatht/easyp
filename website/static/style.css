@@ -48,7 +48,7 @@ section {
   margin-bottom: 2em;
   padding: 2em;
   filter: drop-shadow(0px 0px 1em rgba(0, 0, 0, 0.25));
-  background-image: linear-gradient(to right, #228b22, #32cd32, #00ff00, #90ee90, #98fb98);
+  background-image: linear-gradient(to right, #126b22, #22ad32, #008f00, #60ce80, #58cb68);
 }
 div.box {
   display: flex;
@@ -224,6 +224,39 @@ span.tag {
   text-decoration: none;
 }
 
+.nav-links {
+  display: flex;
+  gap: 1em;
+  flex-wrap: wrap;
+  margin-top: 1em;
+}
+
+.nav-link {
+  display: inline-block;
+  padding: 0.6em 1.2em;
+  background: #f8f9fa;
+  color: #333;
+  text-decoration: none;
+  border-radius: 6px;
+  font-weight: 500;
+  transition: all 0.3s ease;
+  border: 1px solid #dee2e6;
+}
+
+.header-link {
+  font-size: larger;
+  padding-right: 20px;
+  padding-left: 20px;
+}
+
+.nav-link:hover {
+  background: #e9ecef;
+  color: #228b22;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  text-decoration: none;
+}
+
 .main-header {
   display: flex;
   align-items: center;
@@ -264,3 +297,30 @@ span.tag {
   height: 60px;
   width: auto;
 }
+
+.comment-form {
+  color: black !important;
+}
+
+.comment-form * {
+  color: black !important;
+}
+
+.comment-form h3 {
+  color: black !important;
+}
+
+.comment-form label {
+  color: black !important;
+}
+
+.comment-form input,
+.comment-form textarea {
+  color: black !important;
+  background-color: white !important;
+}
+
+.comment-form button {
+  color: white !important;
+}
+

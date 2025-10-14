@@ -1,5 +1,5 @@
 # Hugo configuration
-baseURL = "https://rustls.dev/"
+baseURL = "https://www.easyp.net/"
 title = "rustls"
 languageCode = "en-us"
 
