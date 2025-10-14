@@ -11,17 +11,17 @@ if "%~1"=="" (
     echo Example: %0 0.1.3 LATEST
     echo.
     echo This script will:
-    echo  1. Create easyp-VER.tgz source tarball (using WSL tar)
-    echo  2. Build easyp-VER-x64.gz Linux binary using cross with LTO
-    echo  3. Build easyp-VER-x64.zip Windows binary with LTO
-    echo  4. Upload all files to www.easyp.net:/var/www/html
-    echo  5. If LATEST is specified, update easyp-latest symlinks
+    echo " 1. Create easyp-VER.tgz source tarball (using WSL tar with maximum compression)"
+    echo " 2. Build easyp-VER-x64.gz Linux binary using cross with LTO and gz99 compression"
+    echo " 3. Build easyp-VER-x64.zip Windows binary with LTO and maximum compression"
+    echo " 4. Upload all files to www.easyp.net:/var/www/html"
+    echo " 5. If LATEST is specified, update easyp-latest symlinks"
     echo.
     echo Requirements:
-    echo  - WSL (Windows Subsystem for Linux)
-    echo  - cross (cargo install cross)
-    echo  - SSH access to www.easyp.net
-    echo  - PowerShell (for Windows binary compression)
+    echo " - WSL (Windows Subsystem for Linux)"
+    echo " - cross (cargo install cross)"
+    echo " - SSH access to www.easyp.net"
+    echo " - PowerShell (for Windows binary compression)"
     exit /b 1
 )
 
@@ -65,7 +65,7 @@ if errorlevel 1 (
     echo Error: Failed to convert Windows path to WSL path
     goto cleanup
 )
-wsl tar -zcf "%WSL_TEMP_DIR%/easyp-%VERSION%.tgz" --exclude="*/target/*" --exclude="target/" --exclude="*.log" --exclude="*.tmp" --exclude="*.bak" --exclude="*/ubuntu-12.04-rootfs/*" .
+wsl env GZIP=-9 tar -zcf "%WSL_TEMP_DIR%/easyp-%VERSION%.tgz" --exclude="*/target/*" --exclude="target/" --exclude="*.log" --exclude="*.tmp" --exclude="*.bak" --exclude="*/ubuntu-12.04-rootfs/*" .
 if errorlevel 1 (
     echo Error: Failed to create source tarball
     goto cleanup
@@ -81,8 +81,8 @@ if errorlevel 1 (
     goto cleanup
 )
 
-REM Compress the Linux binary using WSL
-wsl gzip -c "target/x86_64-unknown-linux-gnu/lto/easyp" > "%WSL_TEMP_DIR%/easyp-%VERSION%-x64.gz"
+REM Compress the Linux binary using WSL with gz99 for maximum compression
+wsl env ./gz99 -c < "target/x86_64-unknown-linux-gnu/lto/easyp" "%WSL_TEMP_DIR%/easyp-%VERSION%-x64.gz"
 if errorlevel 1 (
     echo Error: Failed to compress Linux binary
     goto cleanup
@@ -98,8 +98,8 @@ if errorlevel 1 (
     goto cleanup
 )
 
-REM Create Windows binary zip
-powershell -Command "Compress-Archive -Path 'target\lto\easyp.exe' -DestinationPath '%TEMP_DIR%\easyp-%VERSION%-x64.zip' -Force"
+REM Create Windows binary zip with maximum compression
+powershell -Command "Compress-Archive -Path 'target\lto\easyp.exe' -DestinationPath '%TEMP_DIR%\easyp-%VERSION%-x64.zip' -CompressionLevel Optimal -Force"
 if errorlevel 1 (
     echo Error: Failed to create Windows binary zip
     goto cleanup
