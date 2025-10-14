@@ -141,7 +141,7 @@ if "%TEST_LOCAL%"=="1" (
     set SERVER_READY_ATTEMPTS=0
     :test_server_ready
     set /a SERVER_READY_ATTEMPTS+=1
-    if %SERVER_READY_ATTEMPTS% gtr 15 (
+    if !SERVER_READY_ATTEMPTS! gtr 15 (
         echo ERROR: Server failed to start after 30 seconds!
         echo Server logs:
         type server.log 2>nul
@@ -149,7 +149,7 @@ if "%TEST_LOCAL%"=="1" (
     )
     curl -s -o nul -w "%%{http_code}" http://localhost/ >nul 2>&1
     if errorlevel 1 (
-        echo Server not responding yet, waiting 2 more seconds... (attempt %SERVER_READY_ATTEMPTS%/15)
+        echo Server not responding yet, waiting 2 more seconds... (attempt !SERVER_READY_ATTEMPTS!/15)
         timeout /t 2 /nobreak >nul
         goto test_server_ready
     )
@@ -291,10 +291,10 @@ if "%TEST_LOCAL%"=="1" (
     if exist http_test_result.txt (
         set /p HTTP_CODE=<http_test_result.txt
         del http_test_result.txt
-        if "%HTTP_CODE%"=="200" (
-            echo ✓ HTTP test passed (status: %HTTP_CODE%)
+        if "!HTTP_CODE!"=="200" (
+            echo ✓ HTTP test passed (status: !HTTP_CODE!)
         ) else (
-            echo ERROR: HTTP test failed (status: %HTTP_CODE%)
+            echo ERROR: HTTP test failed (status: !HTTP_CODE!)
             echo Server logs:
             type server.log
             goto :error_exit
@@ -309,12 +309,12 @@ if "%TEST_LOCAL%"=="1" (
     if exist https_test_result.txt (
         set /p HTTPS_CODE=<https_test_result.txt
         del https_test_result.txt
-        if "%HTTPS_CODE%"=="200" (
-            echo ✓ HTTPS test passed (status: %HTTPS_CODE%)
-        ) else if "%HTTPS_CODE%"=="404" (
-            echo ✓ HTTPS test passed (status: %HTTPS_CODE% - expected for root path)
+        if "!HTTPS_CODE!"=="200" (
+            echo ✓ HTTPS test passed (status: !HTTPS_CODE!)
+        ) else if "!HTTPS_CODE!"=="404" (
+            echo ✓ HTTPS test passed (status: !HTTPS_CODE! - expected for root path)
         ) else (
-            echo ERROR: HTTPS test failed (status: %HTTPS_CODE%)
+            echo ERROR: HTTPS test failed (status: !HTTPS_CODE!)
             echo Server logs:
             type server.log
             goto :error_exit
@@ -358,8 +358,8 @@ if "%TEST_LOCAL%"=="1" (
     
     REM Show progress every 20 responses
     set /a PROGRESS_MOD=STRESS_RESPONSES %% 20
-    if %PROGRESS_MOD%==0 (
-        echo Progress: %STRESS_RESPONSES% responses, %STRESS_FAILED% failures
+    if !PROGRESS_MOD!==0 (
+        echo Progress: !STRESS_RESPONSES! responses, !STRESS_FAILED! failures
     )
     
     goto :stress_loop
@@ -369,20 +369,20 @@ if "%TEST_LOCAL%"=="1" (
     
     echo.
     echo Stress test completed!
-    echo Start time: %STRESS_START_TIME%
-    echo End time: %STRESS_END_TIME%
-    echo Total responses: %STRESS_RESPONSES%
-    echo Total failures: %STRESS_FAILED%
-    
-    if %STRESS_RESPONSES% lss 100 (
-        echo ERROR: Stress test failed! Only %STRESS_RESPONSES% responses in 5 seconds (minimum required: 100)
+    echo Start time: !STRESS_START_TIME!
+    echo End time: !STRESS_END_TIME!
+    echo Total responses: !STRESS_RESPONSES!
+    echo Total failures: !STRESS_FAILED!
+
+    if !STRESS_RESPONSES! lss 100 (o
+        echo ERROR: Stress test failed! Only !STRESS_RESPONSES! responses in 5 seconds (minimum required: 100)
         echo This indicates the server is not handling load properly.
         echo Server logs:
         type server.log 2>nul
         goto :error_exit
     )
-    
-    echo ✓ High-intensity stress test passed (%STRESS_RESPONSES% responses in 5 seconds)
+
+    echo ✓ High-intensity stress test passed (!STRESS_RESPONSES! responses in 5 seconds)
     
     REM Clean up any remaining timeout file
     if exist stress_timeout.txt del stress_timeout.txt 2>nul
@@ -457,12 +457,12 @@ if "%TEST_CA%"=="1" (
     timeout /t 3 /nobreak >nul
     for /f %%i in ('openssl s_client -connect %CA_HOST%:443 -servername %CA_HOST% -quiet 2^>nul ^| openssl x509 -fingerprint -sha256 -noout 2^>nul ^| findstr "="') do set "CERT2=%%i"
     
-    if "%CERT1%"=="%CERT2%" (
+    if "!CERT1!"=="!CERT2!" (
         echo ✓ Certificate stability test passed on ca.dansted.org
     ) else (
         echo ERROR: Certificate stability test failed on ca.dansted.org!
-        echo First cert:  %CERT1%
-        echo Second cert: %CERT2%
+        echo First cert:  !CERT1!
+        echo Second cert: !CERT2!
         goto :error_exit
     )
     
@@ -534,12 +534,12 @@ if "%TEST_US%"=="1" (
     timeout /t 3 /nobreak >nul
     for /f %%i in ('openssl s_client -connect %US_HOST%:443 -servername %US_HOST% -quiet 2^>nul ^| openssl x509 -fingerprint -sha256 -noout 2^>nul ^| findstr "="') do set "CERT2=%%i"
     
-    if "%CERT1%"=="%CERT2%" (
+    if "!CERT1!"=="!CERT2!" (
         echo ✓ Certificate stability test passed on us.dansted.org
     ) else (
         echo ERROR: Certificate stability test failed on us.dansted.org!
-        echo First cert:  %CERT1%
-        echo Second cert: %CERT2%
+        echo First cert:  !CERT1!
+        echo Second cert: !CERT2!
         goto :error_exit
     )
     
