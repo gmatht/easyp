@@ -2,34 +2,22 @@
 members = [
   # Bogo test shim
   "bogo",
-  # CI benchmarks
-  "ci-bench",
-  # Network-based tests
-  "connect-tests",
-  # tests and example code
-  "examples",
-  # Tests that require OpenSSL
-  "openssl-tests",
-  # example of custom provider
-  "provider-example",
   # the main library and tests
   "rustls",
   # common code for testing the core crate
   "rustls-test",
-  # benchmarking tool
-  "rustls-bench",
-  # experimental post-quantum algorithm support
-  "rustls-post-quantum",
-  # rustls cryptography provider integration tests
-  "rustls-provider-test",
-  # rustls cryptography provider for fuzzing
-  "rustls-fuzzing-provider",
   # ACME certificate management
   "rustls-acme",
   # easyp HTTPS server
   "easyp-crate",
+  # HTTP client
+  "minreq",
+  # Web PKI certificate verification
+  "webpki",
   # tokio-rustls with local rustls
   "tokio-rustls",
+  # Ring wrapper for redox compatibility
+  "ring-wrapper",
 ]
 
 ## Deliberately not included in `members`:
@@ -91,8 +79,9 @@ pki-types = { package = "rustls-pki-types", version = "1.12", features = ["alloc
 rand = "0.8"
 rand_core = { version = "0.6", features = ["getrandom"] }
 rayon = "1.7"
-rcgen = { version = "0.14.4", features = ["pem", "aws_lc_rs"], default-features = false }
-ring = "0.17"
+rcgen = { path = "rcgen/rcgen", features = ["pem", "ring"], default-features = false }
+ring = { path = "ring-wrapper" }
+ring-redox = { git = "https://gitlab.redox-os.org/redox-os/ring.git", rev = "fa98b490", package = "ring" }
 rsa = { version = "0.9", features = ["sha2"], default-features = false }
 rustc-hash = "2"
 rustls-graviola = { version = "0.2" }
@@ -107,21 +96,26 @@ time = { version = "0.3.6", default-features = false }
 tikv-jemallocator = "0.6"
 tempfile = "3.0"
 tokio = { version = "1.34", features = ["io-util", "macros", "net", "rt"] }
-webpki = { package = "rustls-webpki", version = "0.103.5", features = ["alloc"], default-features = false }
+webpki = { package = "rustls-webpki", path = "webpki", features = ["alloc"], default-features = false }
 webpki-roots = "1"
 x25519-dalek = "2"
 x509-parser = "0.18"
 zeroize = "1.8"
 zlib-rs = "0.5"
 
+
 [profile.bench]
 codegen-units = 1
 lto = true
+
+
 
 # ensure all our tests are against the local copy, never
 # against the latest _published_ copy.
 [patch.crates-io]
 rustls = { path = "rustls" }
+rcgen = { path = "rcgen/rcgen", version = "0.14.5" }
+minreq = { path = "minreq" }
 
 [profile.lto]
 opt-level = "z"

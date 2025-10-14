@@ -1,7 +1,12 @@
 use alloc::boxed::Box;
 
 use pki_types::PrivateKeyDer;
+
+#[cfg(target_os = "redox")]
+pub(crate) use ring_redox as ring_like;
+#[cfg(not(target_os = "redox"))]
 pub(crate) use ring as ring_like;
+
 use webpki::ring as webpki_algs;
 
 use crate::crypto::{CryptoProvider, KeyProvider, SecureRandom, SupportedKxGroup};
