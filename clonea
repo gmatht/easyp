@@ -1,0 +1,49 @@
+#!/bin/bash
+# clonea - Clone all required repositories for building easyp from source
+
+set -e
+
+echo "Cloning easyp repositories..."
+
+# Clone the main easyp repository
+echo "Cloning main easyp repository..."
+git clone https://github.com/gmatht/easyp.git
+cd easyp
+
+# Clone the required submodules
+echo "Updating submodules..."
+git submodule update --init --recursive
+
+# Clone additional required repositories
+echo "Cloning additional repositories..."
+
+# Clone acme-lib
+echo "Cloning acme-lib..."
+git clone https://github.com/gmatht/acme-lib.git
+
+# Clone easyp-crate
+echo "Cloning easyp-crate..."
+git clone https://github.com/gmatht/easyp-crate.git
+
+# Clone minreq
+echo "Cloning minreq..."
+git clone https://github.com/gmatht/minreq.git
+
+# Clone rcgen
+echo "Cloning rcgen..."
+git clone https://github.com/gmatht/rcgen.git
+
+# Clone rustls-acme
+echo "Cloning rustls-acme..."
+git clone https://github.com/gmatht/rustls-acme.git
+
+# Clone tokio-rustls
+echo "Cloning tokio-rustls..."
+git clone https://github.com/gmatht/tokio-rustls.git
+
+# Clone webpki
+echo "Cloning webpki..."
+git clone https://github.com/gmatht/webpki.git
+
+echo "All repositories cloned successfully!"
+echo "You can now build easyp from source."
