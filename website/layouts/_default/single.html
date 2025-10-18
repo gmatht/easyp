@@ -1,0 +1,29 @@
+{{ define "main" }}
+<article class="article">
+    <div class="container">
+        <header class="article-header">
+            <h1 class="article-title">{{ .Title }}</h1>
+            {{ if .Params.date }}
+            <time class="article-date" datetime="{{ .Date.Format "2006-01-02T15:04:05Z07:00" }}">
+                {{ .Date.Format "January 2, 2006" }}
+            </time>
+            {{ end }}
+        </header>
+        
+        <div class="article-content">
+            {{ .Content }}
+	    #!EXTEND:comment()
+        </div>
+        
+        {{ if .Params.tags }}
+        <footer class="article-footer">
+            <div class="tags">
+                {{ range .Params.tags }}
+                <span class="tag">{{ . }}</span>
+                {{ end }}
+            </div>
+        </footer>
+        {{ end }}
+    </div>
+</article>
+{{ end }}
