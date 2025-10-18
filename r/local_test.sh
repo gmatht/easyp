@@ -47,7 +47,7 @@ echo "DEBUG: Starting local test process..."
 	
 	echo "DEBUG: Testing server connectivity..."
 	echo "DEBUG: Checking if port 80 is open..."
-	if bash -c "echo > /dev/tcp/$SRV/80" 2>/dev/null; then
+	if bash -c "echo > /dev/tcp/$SRV/80"; then
 		echo "DEBUG: Port 80 is open"
 	else
 		echo "DEBUG: WARNING - Port 80 is not accessible"
