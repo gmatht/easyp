@@ -13,7 +13,7 @@ dependencies = [
  "minreq",
  "pem",
  "rand",
- "rcgen",
+ "rcgen 0.14.5",
  "ring 0.17.14",
  "rsa",
  "rustls 0.24.0-dev.0",
@@ -584,7 +584,7 @@ dependencies = [
  "lexopt",
  "libc",
  "log",
- "rcgen",
+ "rcgen 0.14.5",
  "rustls 0.24.0-dev.0",
  "rustls-acme",
  "rustls-pemfile 2.2.0",
@@ -1431,6 +1431,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rcgen"
+version = "0.14.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fae430c6b28f1ad601274e78b7dffa0546de0b73b4cd32f46723c0c2a16f7a5"
+dependencies = [
+ "aws-lc-rs",
+ "pem",
+ "ring 0.17.14 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rustls-pki-types",
+ "time",
+ "yasna",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1471,7 +1485,6 @@ checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
 [[package]]
 name = "ring"
 version = "0.17.8"
-source = "git+https://gitlab.redox-os.org/redox-os/ring.git?rev=fa98b490#fa98b490bcbc99a01ff150896ec74c1813242d7f"
 dependencies = [
  "cc",
  "cfg-if",
@@ -1599,7 +1612,7 @@ dependencies = [
  "macro_rules_attribute",
  "num-bigint",
  "once_cell",
- "rcgen",
+ "rcgen 0.14.5",
  "ring 0.17.14",
  "rustls-pki-types",
  "rustls-test",
@@ -1624,7 +1637,7 @@ dependencies = [
  "get_if_addrs",
  "log",
  "rand",
- "rcgen",
+ "rcgen 0.14.5",
  "ring 0.17.14",
  "rustls 0.24.0-dev.0",
  "rustls-pemfile 2.2.0",
@@ -1704,7 +1717,7 @@ dependencies = [
  "bencher",
  "bzip2",
  "once_cell",
- "rcgen",
+ "rcgen 0.14.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "ring 0.17.14",
  "rustls-pki-types",
  "serde",
@@ -2021,7 +2034,7 @@ dependencies = [
  "argh",
  "futures-util",
  "lazy_static",
- "rcgen",
+ "rcgen 0.14.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "rustls 0.23.32",
  "tokio",
  "webpki-roots 1.0.3",
