@@ -1,4 +1,4 @@
-@echo off
+:@echo off
 setlocal enabledelayedexpansion
 
 REM PUBLISH_VERSION.bat - Build and upload easyp releases
@@ -10,14 +10,14 @@ if "%~1"=="" (
     echo Usage: %0 ^<VERSION^> [LATEST]
     echo Example: %0 0.1.3 LATEST
     echo.
-    echo This script will:
-    echo " 1. Create easyp-VER.tgz source tarball (using WSL tar with maximum compression)"
-    echo " 2. Build easyp-VER-x64.gz Linux binary using cross with LTO and gz99 compression"
-    echo " 3. Build easyp-VER-x64.zip Windows binary with LTO and maximum compression"
+    echo "This script will:"
+    echo " 1. Create easyp-VER.tgz source tarball (using WSL tar)"
+    echo " 2. Build easyp-VER-x64.gz Linux binary using cross with LTO"
+    echo " 3. Build easyp-VER-x64.zip Windows binary with LTO"
     echo " 4. Upload all files to www.easyp.net:/var/www/html"
-    echo " 5. If LATEST is specified, update easyp-latest symlinks"
+    echo " 5. If LATEST is specified^, update easyp-latest symlinks"
     echo.
-    echo Requirements:
+    echo "Requirements:"
     echo " - WSL (Windows Subsystem for Linux)"
     echo " - cross (cargo install cross)"
     echo " - SSH access to www.easyp.net"
@@ -27,7 +27,7 @@ if "%~1"=="" (
 
 set VERSION=%1
 set IS_LATEST=%2
-set UPLOAD_HOST=www.easyp.net
+set UPLOAD_HOST=root@www.easyp.net
 set UPLOAD_PATH=/var/www/html
 
 echo Building easyp version %VERSION%...
@@ -65,7 +65,7 @@ if errorlevel 1 (
     echo Error: Failed to convert Windows path to WSL path
     goto cleanup
 )
-wsl env GZIP=-9 tar -zcf "%WSL_TEMP_DIR%/easyp-%VERSION%.tgz" --exclude="*/target/*" --exclude="target/" --exclude="*.log" --exclude="*.tmp" --exclude="*.bak" --exclude="*/ubuntu-12.04-rootfs/*" .
+wsl env GZIP=-9 tar -zcvf "%WSL_TEMP_DIR%/easyp-%VERSION%.tgz" --transform 's,^,easyp/,' --exclude="*/target/*" --exclude="target/" --exclude="*.log" --exclude="*.tmp" --exclude="*.bak" --exclude="*/ubuntu-12.04-rootfs/*" --exclude="redox/prefix/" --exclude "*/.git/*" --exclude "*/old/*" --exclude="./r/easyp" .
 if errorlevel 1 (
     echo Error: Failed to create source tarball
     goto cleanup
@@ -82,7 +82,7 @@ if errorlevel 1 (
 )
 
 REM Compress the Linux binary using WSL with gz99 for maximum compression
-wsl env ./gz99 -c < "target/x86_64-unknown-linux-gnu/lto/easyp" "%WSL_TEMP_DIR%/easyp-%VERSION%-x64.gz"
+wsl bash -c "cat target/x86_64-unknown-linux-gnu/lto/easyp | ./gz99 %WSL_TEMP_DIR%/easyp-%VERSION%-x64.gz"
 if errorlevel 1 (
     echo Error: Failed to compress Linux binary
     goto cleanup
@@ -98,8 +98,8 @@ if errorlevel 1 (
     goto cleanup
 )
 
-REM Create Windows binary zip with maximum compression
-powershell -Command "Compress-Archive -Path 'target\lto\easyp.exe' -DestinationPath '%TEMP_DIR%\easyp-%VERSION%-x64.zip' -CompressionLevel Optimal -Force"
+REM Create Windows binary zip
+powershell -Command "Compress-Archive -Path 'target\lto\easyp.exe' -DestinationPath '%TEMP_DIR%\easyp-%VERSION%-x64.zip' -Force"
 if errorlevel 1 (
     echo Error: Failed to create Windows binary zip
     goto cleanup
@@ -107,7 +107,25 @@ if errorlevel 1 (
 echo Windows binary created: %TEMP_DIR%\easyp-%VERSION%-x64.zip
 
 echo.
-echo Step 4: Verifying files before upload...
+echo Step 4: Building Redox binary...
+REM Build Redox binary using Docker and redoxer
+echo Building Redox binary using Docker...
+docker run -v "%CD%":/easyp -v "D:\src\ring-redox":/ring-redox -t docker.io/redoxos/redoxer:latest bash -c "cd /easyp;redoxer build"
+if errorlevel 1 (
+    echo Error: Failed to build Redox binary
+    goto cleanup
+)
+
+REM Compress the Redox binary using WSL with gz99 for maximum compression
+wsl bash -c "cat target/x86_64-unknown-redox/lto/easyp | ./gz99 %WSL_TEMP_DIR%/easyp-%VERSION%-redox.gz"
+if errorlevel 1 (
+    echo Error: Failed to compress Redox binary
+    goto cleanup
+)
+echo Redox binary created: %TEMP_DIR%\easyp-%VERSION%-redox.gz
+
+echo.
+echo Step 5: Verifying files before upload...
 REM Verify all files exist
 if not exist "%TEMP_DIR%\easyp-%VERSION%.tgz" (
     echo Error: Source tarball not found
@@ -121,10 +139,14 @@ if not exist "%TEMP_DIR%\easyp-%VERSION%-x64.zip" (
     echo Error: Windows binary not found
     goto cleanup
 )
+if not exist "%TEMP_DIR%\easyp-%VERSION%-redox.gz" (
+    echo Error: Redox binary not found
+    goto cleanup
+)
 echo All files verified successfully.
 
 echo.
-echo Step 5: Uploading files to %UPLOAD_HOST%:%UPLOAD_PATH%...
+echo Step 6: Uploading files to %UPLOAD_HOST%:%UPLOAD_PATH%...
 REM Upload all files to the server
 scp "%TEMP_DIR%\easyp-%VERSION%.tgz" "%UPLOAD_HOST%:%UPLOAD_PATH%/"
 if errorlevel 1 (
@@ -144,13 +166,19 @@ if errorlevel 1 (
     goto cleanup
 )
 
+scp "%TEMP_DIR%\easyp-%VERSION%-redox.gz" "%UPLOAD_HOST%:%UPLOAD_PATH%/"
+if errorlevel 1 (
+    echo Error: Failed to upload Redox binary
+    goto cleanup
+)
+
 echo Files uploaded successfully!
 
 REM Update symlinks if LATEST is specified
 if /i "%IS_LATEST%"=="LATEST" (
     echo.
-    echo Step 6: Updating easyp-latest symlinks...
-    ssh %UPLOAD_HOST% "cd %UPLOAD_PATH% && ln -sf easyp-%VERSION%.tgz easyp-latest.tgz && ln -sf easyp-%VERSION%-x64.gz easyp-latest-x64.gz && ln -sf easyp-%VERSION%-x64.zip easyp-latest.zip"
+    echo Step 7: Updating easyp-latest symlinks...
+    ssh %UPLOAD_HOST% "cd %UPLOAD_PATH% && ln -sf easyp-%VERSION%.tgz easyp-latest.tgz && ln -sf easyp-%VERSION%-x64.gz easyp-latest-x64.gz && ln -sf easyp-%VERSION%-x64.zip easyp-latest.zip && ln -sf easyp-%VERSION%-redox.gz easyp-latest-redox.gz"
     if errorlevel 1 (
         echo Error: Failed to update symlinks
         goto cleanup
@@ -167,12 +195,14 @@ echo Files uploaded to %UPLOAD_HOST%:%UPLOAD_PATH%:
 echo   - easyp-%VERSION%.tgz (source)
 echo   - easyp-%VERSION%-x64.gz (Linux binary)
 echo   - easyp-%VERSION%-x64.zip (Windows binary)
+echo   - easyp-%VERSION%-redox.gz (Redox binary)
 if /i "%IS_LATEST%"=="LATEST" (
     echo.
     echo Symlinks updated:
     echo   - easyp-latest.tgz
     echo   - easyp-latest-x64.gz
     echo   - easyp-latest.zip
+    echo   - easyp-latest-redox.gz
 )
 
 goto cleanup
