@@ -34,7 +34,7 @@ then
 	echo "DEBUG: Building completed, starting deployment..."
 	
 	echo "DEBUG: Killing existing easyp processes on remote server..."
-	ssh root@$SRV "pkill easyp;sleep 1;pkill -9 easyp; true" && echo "DEBUG: Process cleanup completed"
+	ssh root@$SRV "pkill easyp;sleep 1;pkill -9 easyp; rm /var/lib/easyp/certs/staging; true" && echo "DEBUG: Process cleanup completed"
 	
 	echo "DEBUG: Syncing binary to remote server..."
 	rsync -avz target/debug/easyp root@$SRV: && echo "DEBUG: Binary sync completed"
