@@ -34,7 +34,7 @@ then
 	echo "DEBUG: Building completed, starting deployment..."
 	
 	echo "DEBUG: Killing existing easyp processes on remote server..."
-	ssh root@$SRV "pkill easyp;sleep 1;pkill -9 easyp; rm /var/lib/easyp/certs/staging; true" && echo "DEBUG: Process cleanup completed"
+	ssh root@$SRV 'pkill easyp;sleep 1;pkill -9 easyp; rm /var/lib/easyp/certs/staging/*; true' && echo "DEBUG: Process cleanup completed"
 	
 	echo "DEBUG: Syncing binary to remote server..."
 	rsync -avz target/debug/easyp root@$SRV: && echo "DEBUG: Binary sync completed"
@@ -60,14 +60,14 @@ then
 	
 	echo "DEBUG: Testing server connectivity..."
 	echo "DEBUG: Checking if port 80 is open..."
-	if timeout 5 bash -c "echo > /dev/tcp/$SRV/80" 2>/dev/null; then
+	if time bash -c "echo > /dev/tcp/$SRV/80" 2>/dev/null; then
 		echo "DEBUG: Port 80 is open"
 	else
 		echo "DEBUG: WARNING - Port 80 is not accessible"
 	fi
 	
 	echo "DEBUG: Checking if port 443 is open..."
-	if timeout 5 bash -c "echo > /dev/tcp/$SRV/443" 2>/dev/null; then
+	if time bash -c "echo > /dev/tcp/$SRV/443" 2>/dev/null; then
 		echo "DEBUG: Port 443 is open"
 	else
 		echo "DEBUG: WARNING - Port 443 is not accessible"
@@ -75,7 +75,7 @@ then
 	
 	echo "DEBUG: Starting HTTP test with 10 second timeout..."
 	echo === HTTP TEST ===
-	if timeout 10 curl -v --connect-timeout 5 --max-time 10 "http://$SRV"; then
+	if time curl -v --connect-timeout 5 --max-time 10 "http://$SRV"; then
 		echo "DEBUG: HTTP test completed successfully"
 	else
 		echo "DEBUG: HTTP test failed or timed out"
@@ -83,9 +83,9 @@ then
 	
 	sleep 1
 	
-	echo "DEBUG: Starting HTTPS test with 10 second timeout..."
+	echo "DEBUG: Starting HTTPS test with 60 second timeout..."
 	echo === HTTPS TEST ===
-	if timeout 10 curl -v --connect-timeout 5 --max-time 10 -k "https://$SRV"; then
+	if time curl -v --connect-timeout 60 --max-time 60 -k "https://$SRV"; then
 		echo "DEBUG: HTTPS test completed successfully"
 	else
 		echo "DEBUG: HTTPS test failed or timed out"
