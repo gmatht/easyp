@@ -1,0 +1,33 @@
+[source]
+git = "https://github.com/gmatht/easyp.git"
+upstream = "https://github.com/gmatht/easyp.git"
+branch = "main"
+# rev will be set automatically by the build system
+# blake3 will be calculated after first build
+
+[build]
+template = "cargo"
+cargoflags = [
+    "--bin", "easyp",
+    "--features", "acme,extensions,crypto-ring",
+    "--target", "x86_64-unknown-redox"
+]
+dependencies = [
+    "rustc",
+    "cargo",
+    "pkg-config",
+    "openssl-dev",
+]
+
+[package]
+name = "easyp"
+version = "0.1.3-alpha1"
+description = "Easy HTTPS server written in Rust with automatic certificate management"
+license = "MIT"
+authors = ["gmatht <gmatht@users.noreply.github.com>"]
+homepage = "https://www.easyp.net"
+repository = "https://github.com/gmatht/easyp"
+dependencies = [
+    "libc",
+    "openssl",
+]

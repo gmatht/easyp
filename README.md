@@ -60,7 +60,7 @@ Drop these files into `extensions/` at compile time to have you extensions linke
 - **`comment.admin.rs`**: Provides comment moderation interface
 
 #### Math Extension (`math.expand.rs`)
-- Converts `#EXPAND:math(op,i,j)` blocks to rendered math, where op can be e.g. "add"
+- Converts `#EXTEND:math(op,i,j)` blocks to rendered math, where op can be e.g. "add"
 
 #### Example Extension (`example.expand.rs`)
 - Demonstrates basic extension functionality
@@ -165,7 +165,7 @@ pub fn extend(url: &str, args: &str) -> String {
 easyp includes a complete commenting system with moderation capabilities:
 
 ### Features
-- **Comment Forms**: Automatically replaces '#EXPAND:comment()' in served html files
+- **Comment Forms**: Automatically replaces '#EXTEND:comment()' in served html files
 - **Live Comments**: Accepted comments appear immediately on the page
 - **Moderation**: Admin interface for approving/rejecting comments
 - **Security**: Comments are sanitized and validated

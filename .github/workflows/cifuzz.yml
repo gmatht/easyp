@@ -1,7 +1,17 @@
-name: CIFuzz
+name: CIFuzz (disabled)
 permissions:
   contents: read
-on: [pull_request]
+on:
+  workflow_dispatch:
+    inputs:
+      note:
+        description: 'This rustls-specific fuzz workflow is disabled by default.'
+        required: false
+  # disabled default triggers
+  push:
+    branches: []
+  pull_request:
+    branches: []
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}

@@ -147,7 +147,7 @@ if "%TEST_LOCAL%"=="1" (
         type server.log 2>nul
         goto :error_exit
     )
-    curl -s -o nul -w "%%{http_code}" http://localhost/ >nul 2>&1
+    curl -s -o nul -w "%%{http_code}" http://localhost/ 2>nul
     if errorlevel 1 (
         echo Server not responding yet, waiting 2 more seconds... (attempt !SERVER_READY_ATTEMPTS!/15)
         timeout /t 2 /nobreak >nul
@@ -287,40 +287,52 @@ if "%TEST_LOCAL%"=="1" (
     
     REM Test HTTP connectivity with curl if available, otherwise use telnet
     echo Testing HTTP connectivity...
-    curl -s -o nul -w "%%{http_code}" http://localhost/ 2>nul > http_test_result.txt
-    if exist http_test_result.txt (
-        set /p HTTP_CODE=<http_test_result.txt
-        del http_test_result.txt
-        if "!HTTP_CODE!"=="200" (
-            echo ✓ HTTP test passed (status: !HTTP_CODE!)
+    curl --version >nul 2>&1
+    if errorlevel 1 (
+        echo WARNING: curl not available, skipping HTTP test
+    ) else (
+        curl -s -o nul -w "%%{http_code}" http://localhost/ 2>nul > http_test_result.txt
+        if exist http_test_result.txt (
+            set /p HTTP_CODE=<http_test_result.txt
+            del http_test_result.txt
+            if "!HTTP_CODE!"=="200" (
+                echo ✓ HTTP test passed (status: !HTTP_CODE!)
+            ) else (
+                echo ERROR: HTTP test failed (status: !HTTP_CODE!)
+                echo Server logs:
+                type server.log
+                goto :error_exit
+            )
         ) else (
-            echo ERROR: HTTP test failed (status: !HTTP_CODE!)
-            echo Server logs:
-            type server.log
+            echo ERROR: HTTP test failed - no response
             goto :error_exit
         )
-    ) else (
-        echo WARNING: curl not available, skipping HTTP test
     )
     
     REM Test HTTPS connectivity
     echo Testing HTTPS connectivity...
-    curl -s -o nul -w "%%{http_code}" -k https://localhost/ 2>nul > https_test_result.txt
-    if exist https_test_result.txt (
-        set /p HTTPS_CODE=<https_test_result.txt
-        del https_test_result.txt
-        if "!HTTPS_CODE!"=="200" (
-            echo ✓ HTTPS test passed (status: !HTTPS_CODE!)
-        ) else if "!HTTPS_CODE!"=="404" (
-            echo ✓ HTTPS test passed (status: !HTTPS_CODE! - expected for root path)
+    curl --version >nul 2>&1
+    if errorlevel 1 (
+        echo WARNING: curl not available, skipping HTTPS test
+    ) else (
+        curl -s -o nul -w "%%{http_code}" -k https://localhost/ 2>nul > https_test_result.txt
+        if exist https_test_result.txt (
+            set /p HTTPS_CODE=<https_test_result.txt
+            del https_test_result.txt
+            if "!HTTPS_CODE!"=="200" (
+                echo ✓ HTTPS test passed (status: !HTTPS_CODE!)
+            ) else if "!HTTPS_CODE!"=="404" (
+                echo ✓ HTTPS test passed (status: !HTTPS_CODE! - expected for root path)
+            ) else (
+                echo ERROR: HTTPS test failed (status: !HTTPS_CODE!)
+                echo Server logs:
+                type server.log
+                goto :error_exit
+            )
         ) else (
-            echo ERROR: HTTPS test failed (status: !HTTPS_CODE!)
-            echo Server logs:
-            type server.log
+            echo ERROR: HTTPS test failed - no response
             goto :error_exit
         )
-    ) else (
-        echo WARNING: curl not available, skipping HTTPS test
     )
     
     REM High-intensity stress test - 5 seconds, minimum 100 responses
@@ -341,7 +353,7 @@ if "%TEST_LOCAL%"=="1" (
     )
     
     REM Run HTTP request
-    curl -s -o nul -w "%%{http_code}" --max-time 1 --connect-timeout 1 http://localhost/ >nul 2>&1
+    curl -s -o nul -w "%%{http_code}" --max-time 1 --connect-timeout 1 http://localhost/ 2>nul
     if errorlevel 1 (
         set /a STRESS_FAILED+=1
     ) else (
@@ -349,7 +361,7 @@ if "%TEST_LOCAL%"=="1" (
     )
     
     REM Run HTTPS request
-    curl -s -o nul -w "%%{http_code}" --max-time 1 --connect-timeout 1 -k https://localhost/ >nul 2>&1
+    curl -s -o nul -w "%%{http_code}" --max-time 1 --connect-timeout 1 -k https://localhost/ 2>nul
     if errorlevel 1 (
         set /a STRESS_FAILED+=1
     ) else (

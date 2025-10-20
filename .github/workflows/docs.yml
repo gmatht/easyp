@@ -1,20 +1,17 @@
-name: documentation
+name: documentation (easyp)
 
 permissions:
   contents: read
 
 on:
   workflow_dispatch:
-  pull_request:
   push:
     branches:
       - main
-  schedule:
-    - cron: '0 18 * * *'
 
 jobs:
   generate:
-    name: Generate pre-release documentation
+    name: Generate website docs
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
@@ -23,7 +20,7 @@ jobs:
           persist-credentials: false
 
       - name: Install rust toolchain
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Install Hugo
         uses: peaceiris/actions-hugo@v2
@@ -31,23 +28,14 @@ jobs:
           hugo-version: '0.131.0'
           extended: true
 
-      - name: Generate version information
-        run: |
-          echo >tag.html \
-            "<script>var version = document.querySelector(\"span.version\");" \
-            "version.innerHTML += \"<br>(pre-release docs from <tt>$GITHUB_REF</tt>)\";" \
-            "version.title = \"commit $GITHUB_SHA\";" \
-            "</script>"
+      - name: Prepare tag info (optional)
+        run: echo "running docs build"
 
-      - name: cargo doc
-        # keep features in sync with Cargo.toml `[package.metadata.docs.rs]` section
-        run: cargo doc --locked --features aws-lc-rs,brotli,custom-provider,hashbrown,log,ring,std,zlib --no-deps --package rustls
-        env:
-          RUSTDOCFLAGS: -Dwarnings --cfg=rustls_docsrs --html-after-content tag.html
-
-      - name: Generate other pages
+      - name: Build website
         run: |
           cd website && hugo --destination ../target/website/
+
+      # Skip rustls rustdoc checks; focus on Hugo website only for easyp
 
       - name: Restore lychee cache
         uses: actions/cache@v4
@@ -56,25 +44,18 @@ jobs:
           key: cache-lychee-${{ github.sha }}
           restore-keys: cache-lychee-
 
-      - name: Check links
+      - name: Check links (markdown only)
         uses: lycheeverse/lychee-action@v2
         with:
           args: >
             --accept 200..=204,403,429,500
             --cache
             --max-cache-age 1d
-            --exclude-path 'website/content/'
-            '**/*.md'
-            'target/doc/**/*.html'
+            'website/content/**/*.md'
           fail: true
 
-      - name: Massage rustdoc output
-        run: |
-          # lockfile causes deployment step to go wrong, due to permissions
-          rm -f target/doc/.lock
-          # move the result into website root
-          mv target/doc/* target/website/
-          mv target/website/rustls target/website/docs
+      - name: Skip rustdoc massage
+        run: echo "rustdoc not built for easyp"
 
       - name: Package and upload artifact
         uses: actions/upload-pages-artifact@v4
@@ -84,7 +65,7 @@ jobs:
   deploy:
     name: Deploy
     runs-on: ubuntu-latest
-    if: github.repository == 'rustls/rustls' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
     needs: generate
     permissions:
       pages: write

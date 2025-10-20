@@ -26,6 +26,11 @@ echo Waiting for server to start...
 timeout /t 5 /nobreak >nul
 
 echo Testing HTTP binary file serving...
+curl.exe --version >nul 2>&1
+if errorlevel 1 (
+    echo ERROR: curl not available!
+    goto :error_exit
+)
 curl.exe -s "http://localhost/test.gz" > test_http.gz 2>nul
 if exist test_http.gz (
     echo ✓ HTTP binary file download completed

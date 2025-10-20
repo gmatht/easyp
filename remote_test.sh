@@ -73,9 +73,13 @@ then
 		echo "DEBUG: WARNING - Port 443 is not accessible"
 	fi
 	
-	echo "DEBUG: Starting HTTP test with 10 second timeout..."
-	echo === HTTP TEST ===
-	if time curl -v --connect-timeout 5 --max-time 10 "http://$SRV"; then
+echo "DEBUG: Starting HTTP test with 10 second timeout..."
+echo === HTTP TEST ===
+if ! command -v curl >/dev/null 2>&1; then
+	echo "ERROR: curl not available!"
+	exit 1
+fi
+if time curl -v --connect-timeout 5 --max-time 10 "http://$SRV"; then
 		echo "DEBUG: HTTP test completed successfully"
 	else
 		echo "DEBUG: HTTP test failed or timed out"
