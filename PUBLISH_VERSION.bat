@@ -65,7 +65,7 @@ if errorlevel 1 (
     echo Error: Failed to convert Windows path to WSL path
     goto cleanup
 )
-wsl env GZIP=-9 tar -zcvf "%WSL_TEMP_DIR%/easyp-%VERSION%.tgz" --transform 's,^,easyp/,' --exclude="*/target/*" --exclude="target/" --exclude="*.log" --exclude="*.tmp" --exclude="*.bak" --exclude="*/ubuntu-12.04-rootfs/*" --exclude="redox/prefix/" --exclude "*/.git/*" --exclude "*/old/*" --exclude="./r/easyp" .
+wsl env GZIP=-9 tar -zcvf "%WSL_TEMP_DIR%/easyp-%VERSION%.tgz" --transform 's,^,easyp/,' --exclude="*/target/*" --exclude="target/" --exclude="*.log" --exclude="*.tmp" --exclude="*.bak" --exclude="*/ubuntu-12.04-rootfs/*" --exclude="redox/prefix/" --exclude "*/.git/*" --exclude "*/old/*" --exclude="./r/easyp" --exclude="easyp-*.gz" .
 if errorlevel 1 (
     echo Error: Failed to create source tarball
     goto cleanup
