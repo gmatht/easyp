@@ -92,6 +92,15 @@ then
 	fi
 	
 	sleep 1
+	
+	echo "DEBUG: Testing PNG file caching headers..."
+	echo === PNG CACHE TEST ===
+	if time curl -I "http://$SRV/easyp.png"; then
+		echo "DEBUG: PNG cache test completed successfully"
+	else
+		echo "DEBUG: PNG cache test failed or timed out"
+	fi
+	
 	echo === END TESTS ===
 	
 	if [ -z "$KEEPALIVE" ]

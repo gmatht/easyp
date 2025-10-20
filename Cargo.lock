@@ -16,7 +16,7 @@ dependencies = [
  "rcgen 0.14.5",
  "ring 0.17.14",
  "rsa",
- "rustls 0.24.0-dev.0",
+ "rustls",
  "rustls-pemfile 2.2.0",
  "rustls-pki-types",
  "serde",
@@ -332,8 +332,8 @@ dependencies = [
  "base64 0.22.1",
  "env_logger",
  "nix",
- "rustls 0.24.0-dev.0",
- "rustls-webpki 0.104.0-alpha.1",
+ "rustls",
+ "rustls-webpki",
 ]
 
 [[package]]
@@ -585,10 +585,11 @@ dependencies = [
  "libc",
  "log",
  "rcgen 0.14.5",
- "rustls 0.24.0-dev.0",
+ "rustls",
  "rustls-acme",
  "rustls-pemfile 2.2.0",
  "tokio",
+ "tokio-rustls",
  "urlencoding",
 ]
 
@@ -1030,9 +1031,9 @@ dependencies = [
  "openssl",
  "openssl-probe",
  "punycode",
- "rustls 0.24.0-dev.0",
+ "rustls",
  "rustls-native-certs",
- "rustls-webpki 0.104.0-alpha.1",
+ "rustls-webpki",
  "serde",
  "serde_json",
  "tiny_http",
@@ -1580,25 +1581,6 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.32"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd3c25631629d034ce7cd9940adc9d45762d46de2b0f57193c4443b92c6d4d40"
-dependencies = [
- "aws-lc-rs",
- "brotli",
- "brotli-decompressor",
- "log",
- "once_cell",
- "ring 0.17.14 (registry+https://github.com/rust-lang/crates.io-index)",
- "rustls-pki-types",
- "rustls-webpki 0.103.7",
- "subtle",
- "zeroize",
- "zlib-rs",
-]
-
-[[package]]
-name = "rustls"
 version = "0.24.0-dev.0"
 dependencies = [
  "aws-lc-rs",
@@ -1616,7 +1598,7 @@ dependencies = [
  "ring 0.17.14",
  "rustls-pki-types",
  "rustls-test",
- "rustls-webpki 0.104.0-alpha.1",
+ "rustls-webpki",
  "serde",
  "serde_json",
  "subtle",
@@ -1639,7 +1621,7 @@ dependencies = [
  "rand",
  "rcgen 0.14.5",
  "ring 0.17.14",
- "rustls 0.24.0-dev.0",
+ "rustls",
  "rustls-pemfile 2.2.0",
  "rustls-pki-types",
  "serde",
@@ -1693,19 +1675,7 @@ dependencies = [
 name = "rustls-test"
 version = "0.1.0"
 dependencies = [
- "rustls 0.24.0-dev.0",
-]
-
-[[package]]
-name = "rustls-webpki"
-version = "0.103.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e10b3f4191e8a80e6b43eebabfac91e5dcecebb27a71f04e820c47ec41d314bf"
-dependencies = [
- "aws-lc-rs",
- "ring 0.17.14 (registry+https://github.com/rust-lang/crates.io-index)",
- "rustls-pki-types",
- "untrusted",
+ "rustls",
 ]
 
 [[package]]
@@ -2035,7 +2005,7 @@ dependencies = [
  "futures-util",
  "lazy_static",
  "rcgen 0.14.5 (registry+https://github.com/rust-lang/crates.io-index)",
- "rustls 0.23.32",
+ "rustls",
  "tokio",
  "webpki-roots 1.0.3",
 ]
