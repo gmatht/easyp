@@ -584,6 +584,7 @@ dependencies = [
  "lexopt",
  "libc",
  "log",
+ "minreq",
  "rcgen 0.14.5",
  "rustls",
  "rustls-acme",
