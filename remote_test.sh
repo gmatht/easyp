@@ -5,6 +5,13 @@
 
 set -e  # Exit on any error
 
+# Function to tail server logs when tests fail
+tail_server_log() {
+    echo "DEBUG: === SERVER LOG (last 50 lines) ==="
+    ssh root@$SRV "tail -n 50 server.log 2>/dev/null || echo 'DEBUG: No server log found'"
+    echo "DEBUG: === END SERVER LOG ==="
+}
+
 STAGING=--staging
 STAGING=
 
@@ -80,6 +87,7 @@ then
 		echo "DEBUG: HTTP test completed successfully"
 	else
 		echo "DEBUG: HTTP test failed or timed out"
+		tail_server_log
 	fi
 	
 	sleep 1
@@ -90,6 +98,7 @@ then
 		echo "DEBUG: HTTPS test completed successfully"
 	else
 		echo "DEBUG: HTTPS test failed or timed out"
+		tail_server_log
 	fi
 	
 	sleep 1
@@ -100,6 +109,7 @@ then
 		echo "DEBUG: PNG cache test completed successfully"
 	else
 		echo "DEBUG: PNG cache test failed or timed out"
+		tail_server_log
 	fi
 	
 	echo "DEBUG: Testing admin extensions detection..."
@@ -170,9 +180,124 @@ then
 		echo "DEBUG: Not hardcoded in build.rs: $HARDCODED_IN_BUILD"
 		echo "DEBUG: Dynamic discovery: $DYNAMIC_DISCOVERY"
 		echo "DEBUG: .admin.rs detection: $ADMIN_RS_DETECTION"
+		tail_server_log
 	fi
 	
 	echo === END TESTS ===
+	
+	echo "DEBUG: Testing non-root user functionality..."
+	echo === NON-ROOT USER TEST ===
+	
+	# Create a test user if it doesn't exist
+	echo "DEBUG: Creating test user 'easytest' if it doesn't exist..."
+	ssh root@$SRV "id easytest >/dev/null 2>&1 || useradd -m easytest" || echo "DEBUG: User creation completed or user already exists"
+	
+	# Copy the binary to the test user's home directory
+	echo "DEBUG: Copying easyp binary to test user's home directory..."
+	ssh root@$SRV "cp easyp /home/easytest/ && chown easytest:easytest /home/easytest/easyp && chmod +x /home/easytest/easyp"
+	
+	# Test running as non-root user (should auto-enable --over-9000)
+	echo "DEBUG: Testing easyp as non-root user (should auto-enable --over-9000)..."
+	if ssh root@$SRV "sudo -u easytest /home/easytest/easyp --test-mode --admin-urls" 2>&1 | grep -q "Automatically enabling --over-9000"; then
+		echo "DEBUG: ✅ SUCCESS - Non-root user correctly auto-enabled --over-9000"
+		NON_ROOT_FALLBACK_TEST=true
+	else
+		echo "DEBUG: ❌ FAILED - Non-root user test did not show expected auto --over-9000 behavior"
+		NON_ROOT_FALLBACK_TEST=false
+	fi
+	
+	# Test that the server actually starts and responds
+	echo "DEBUG: Testing that easyp starts successfully as non-root user..."
+	if timeout 10 ssh root@$SRV "sudo -u easytest /home/easytest/easyp --test-mode > /tmp/nonroot_test.log 2>&1 &" && sleep 3; then
+		if ssh root@$SRV "pgrep -f 'easyp.*test-mode' > /dev/null"; then
+			echo "DEBUG: ✅ SUCCESS - Non-root user easyp process is running"
+			NON_ROOT_STARTUP_TEST=true
+			
+			# Check the logs for auto --over-9000 messages
+			if ssh root@$SRV "grep -q 'Automatically enabling --over-9000' /tmp/nonroot_test.log"; then
+				echo "DEBUG: ✅ SUCCESS - Auto --over-9000 messages found in logs"
+				NON_ROOT_LOG_TEST=true
+			else
+				echo "DEBUG: ⚠️  WARNING - Auto --over-9000 messages not found in logs"
+				NON_ROOT_LOG_TEST=false
+			fi
+			
+			# Test that the server actually responds to HTTP requests
+			echo "DEBUG: Testing HTTP response from non-root server..."
+			if ssh root@$SRV "curl -s -o /dev/null -w '%{http_code}' http://localhost:9080/ 2>/dev/null | grep -q '200\|404'"; then
+				echo "DEBUG: ✅ SUCCESS - Server responds to HTTP requests on port 9080"
+				NON_ROOT_HTTP_TEST=true
+			else
+				echo "DEBUG: ❌ FAILED - Server does not respond to HTTP requests"
+				tail_server_log
+				NON_ROOT_HTTP_TEST=false
+			fi
+			
+			# Test HTTPS response (should work with self-signed certs in test mode)
+			echo "DEBUG: Testing HTTPS response from non-root server..."
+			if ssh root@$SRV "curl -s -k -o /dev/null -w '%{http_code}' https://localhost:9443/ 2>/dev/null | grep -q '200\|404'"; then
+				echo "DEBUG: ✅ SUCCESS - Server responds to HTTPS requests on port 9443"
+				NON_ROOT_HTTPS_TEST=true
+			else
+				echo "DEBUG: ❌ FAILED - Server does not respond to HTTPS requests"
+				tail_server_log
+				NON_ROOT_HTTPS_TEST=false
+			fi
+		else
+			echo "DEBUG: ❌ FAILED - Non-root user easyp process is not running"
+			tail_server_log
+			NON_ROOT_STARTUP_TEST=false
+			NON_ROOT_LOG_TEST=false
+			NON_ROOT_HTTP_TEST=false
+			NON_ROOT_HTTPS_TEST=false
+		fi
+		# Clean up the test process
+		ssh root@$SRV "pkill -f 'easyp.*test-mode' || true"
+	else
+		echo "DEBUG: ❌ FAILED - Non-root user easyp failed to start"
+		tail_server_log
+		NON_ROOT_STARTUP_TEST=false
+		NON_ROOT_LOG_TEST=false
+		NON_ROOT_HTTP_TEST=false
+		NON_ROOT_HTTPS_TEST=false
+	fi
+	
+	# Test that ACME warnings are shown for non-root users
+	echo "DEBUG: Testing ACME warnings for non-root users..."
+	if ssh root@$SRV "sudo -u easytest /home/easytest/easyp --help" 2>&1 | grep -q "Non-root usage:"; then
+		echo "DEBUG: ✅ SUCCESS - Help text includes non-root usage information"
+		NON_ROOT_HELP_TEST=true
+	else
+		echo "DEBUG: ❌ FAILED - Help text does not include non-root usage information"
+		NON_ROOT_HELP_TEST=false
+	fi
+	
+	# Summary
+	echo "DEBUG: === NON-ROOT USER TEST SUMMARY ==="
+	if [ "$NON_ROOT_FALLBACK_TEST" = true ] && [ "$NON_ROOT_STARTUP_TEST" = true ] && [ "$NON_ROOT_LOG_TEST" = true ] && [ "$NON_ROOT_HTTP_TEST" = true ] && [ "$NON_ROOT_HTTPS_TEST" = true ] && [ "$NON_ROOT_HELP_TEST" = true ]; then
+		echo "DEBUG: 🎉 ALL NON-ROOT TESTS PASSED - Non-root user functionality is working correctly"
+		echo "DEBUG: - Auto --over-9000 detection: ✅"
+		echo "DEBUG: - Server startup: ✅"
+		echo "DEBUG: - Log messages: ✅"
+		echo "DEBUG: - HTTP response (port 9080): ✅"
+		echo "DEBUG: - HTTPS response (port 9443): ✅"
+		echo "DEBUG: - Help text: ✅"
+	else
+		echo "DEBUG: ⚠️  SOME NON-ROOT TESTS FAILED"
+		echo "DEBUG: - Auto --over-9000 detection: $NON_ROOT_FALLBACK_TEST"
+		echo "DEBUG: - Server startup: $NON_ROOT_STARTUP_TEST"
+		echo "DEBUG: - Log messages: $NON_ROOT_LOG_TEST"
+		echo "DEBUG: - HTTP response: $NON_ROOT_HTTP_TEST"
+		echo "DEBUG: - HTTPS response: $NON_ROOT_HTTPS_TEST"
+		echo "DEBUG: - Help text: $NON_ROOT_HELP_TEST"
+		tail_server_log
+	fi
+	
+	# Clean up test user files
+	echo "DEBUG: Cleaning up test user files..."
+	ssh root@$SRV "rm -f /home/easytest/easyp /tmp/nonroot_test.log || true"
+	
+	echo === END NON-ROOT TESTS ===
 	
 	if [ -z "$KEEPALIVE" ]
 	then
