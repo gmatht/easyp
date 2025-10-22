@@ -36,8 +36,8 @@ echo "DEBUG: Starting deployment process..."
 source ~/.cargo/env
 
 # Build if needed
-[ -f target/debug/easyp ] || RUSTC_WRAPPER= cargo build --bin easyp
-if [ -z "$(find src/ */src easyp-crate/extensions -type f -newer target/debug/easyp 2>/dev/null)" ] || RUSTC_WRAPPER= cargo build --bin easyp
+[ -f target/debug/easyp ] || RUSTC_WRAPPER= cargo build --bin easyp --features extensions
+if [ -z "$(find src/ */src easyp-crate/extensions -type f -newer target/debug/easyp 2>/dev/null)" ] || RUSTC_WRAPPER= cargo build --bin easyp --features extensions
 then
 	echo "DEBUG: Building completed, starting deployment..."
 	
@@ -125,6 +125,16 @@ then
 		RUNTIME_TEST_PASSED=false
 	fi
 	
+	# Test 1.5: Check if cgi-bin/comment endpoint is available
+	echo "DEBUG: Test 1.5 - Checking if cgi-bin/comment endpoint is available..."
+	if curl -s -k --connect-timeout 5 --max-time 10 "https://$SRV/cgi-bin/comment" | grep -q "Missing Required Parameters\|Comment Submitted Successfully"; then
+		echo "DEBUG: ✅ SUCCESS - cgi-bin/comment endpoint is available and responding"
+		CGI_BIN_TEST_PASSED=true
+	else
+		echo "DEBUG: ❌ FAILED - cgi-bin/comment endpoint is not available or not responding"
+		CGI_BIN_TEST_PASSED=false
+	fi
+	
 	# Test 2: Check that 'comment' is NOT hardcoded in easyp.rs (should be dynamically discovered)
 	echo "DEBUG: Test 2 - Verifying 'comment' extension is NOT hardcoded in easyp.rs..."
 	if grep -q '"comment"' easyp-crate/src/bin/easyp.rs; then
@@ -169,13 +179,15 @@ then
 	
 	# Summary
 	echo "DEBUG: === EXTENSION SYSTEM TEST SUMMARY ==="
-	if [ "$RUNTIME_TEST_PASSED" = true ] && [ "$HARDCODED_IN_EASYP" = false ] && [ "$HARDCODED_IN_BUILD" = false ] && [ "$DYNAMIC_DISCOVERY" = true ] && [ "$ADMIN_RS_DETECTION" = true ]; then
+	if [ "$RUNTIME_TEST_PASSED" = true ] && [ "$CGI_BIN_TEST_PASSED" = true ] && [ "$HARDCODED_IN_EASYP" = false ] && [ "$HARDCODED_IN_BUILD" = false ] && [ "$DYNAMIC_DISCOVERY" = true ] && [ "$ADMIN_RS_DETECTION" = true ]; then
 		echo "DEBUG: 🎉 ALL TESTS PASSED - Extension system is working correctly and is not hardcoded"
 		echo "DEBUG: The 'comment' extension is automatically detected and integrated without hardcoding"
 		echo "DEBUG: The system uses dynamic discovery of .admin.rs files"
+		echo "DEBUG: The cgi-bin/comment endpoint is available and responding"
 	else
 		echo "DEBUG: ⚠️  SOME TESTS FAILED - Extension system may have issues"
 		echo "DEBUG: Runtime detection: $RUNTIME_TEST_PASSED"
+		echo "DEBUG: CGI-bin endpoint: $CGI_BIN_TEST_PASSED"
 		echo "DEBUG: Not hardcoded in easyp.rs: $HARDCODED_IN_EASYP"
 		echo "DEBUG: Not hardcoded in build.rs: $HARDCODED_IN_BUILD"
 		echo "DEBUG: Dynamic discovery: $DYNAMIC_DISCOVERY"
@@ -298,6 +310,88 @@ then
 	ssh root@$SRV "rm -f /home/easytest/easyp /tmp/nonroot_test.log || true"
 	
 	echo === END NON-ROOT TESTS ===
+	
+	# Test comment system functionality
+	echo "DEBUG: Testing comment system functionality..."
+	echo === COMMENT SYSTEM TEST ===
+	
+	# Test 1: Check if comment extension is available via cgi-bin
+	echo "DEBUG: Test 1 - Testing comment submission via cgi-bin..."
+	COMMENT_URL="https://$SRV/cgi-bin/comment?return_url=%2Ffeatures%2F&USER=A+testy+tester&TEXT=I+am+just+a-testing+here.+What-chu+look%27n+at%3F"
+	
+	# Test the comment submission
+	if curl -s -k --connect-timeout 10 --max-time 30 "$COMMENT_URL" | grep -q "Comment Submitted Successfully"; then
+		echo "DEBUG: ✅ SUCCESS - Comment submission via cgi-bin worked correctly"
+		COMMENT_SUBMISSION_TEST=true
+	else
+		echo "DEBUG: ❌ FAILED - Comment submission via cgi-bin failed or returned 404"
+		echo "DEBUG: Response from comment URL:"
+		curl -s -k --connect-timeout 10 --max-time 30 "$COMMENT_URL" | head -10
+		COMMENT_SUBMISSION_TEST=false
+	fi
+	
+	# Test 2: Check if comment was stored in the comments file
+	echo "DEBUG: Test 2 - Checking if comment was stored in comments file..."
+	if ssh root@$SRV "test -f /var/spool/easyp/comments/in && grep -q 'A testy tester' /var/spool/easyp/comments/in"; then
+		echo "DEBUG: ✅ SUCCESS - Comment was stored in comments file"
+		COMMENT_STORAGE_TEST=true
+	else
+		echo "DEBUG: ❌ FAILED - Comment was not found in comments file"
+		COMMENT_STORAGE_TEST=false
+	fi
+	
+	# Test 3: Test comment admin panel access
+	echo "DEBUG: Test 3 - Testing comment admin panel access..."
+	ADMIN_URL=$(ssh root@$SRV "./easyp --admin-urls" | grep "comment_" | head -1)
+	if [ -n "$ADMIN_URL" ]; then
+		FULL_ADMIN_URL="https://$SRV$ADMIN_URL"
+		if curl -s -k --connect-timeout 10 --max-time 30 "$FULL_ADMIN_URL" | grep -q "Comment Moderation"; then
+			echo "DEBUG: ✅ SUCCESS - Comment admin panel is accessible"
+			COMMENT_ADMIN_TEST=true
+		else
+			echo "DEBUG: ❌ FAILED - Comment admin panel is not accessible or not working"
+			COMMENT_ADMIN_TEST=false
+		fi
+	else
+		echo "DEBUG: ❌ FAILED - Could not find comment admin URL"
+		COMMENT_ADMIN_TEST=false
+	fi
+	
+	# Test 4: Test comment form expansion (if there's a test HTML file)
+	echo "DEBUG: Test 4 - Testing comment form expansion..."
+	# Create a test HTML file with comment extension
+	ssh root@$SRV "mkdir -p /var/www/html/test && echo '<html><body><h1>Test Page</h1>#EXTEND:comment()</body></html>' > /var/www/html/test/index.html"
+	
+	if curl -s -k --connect-timeout 10 --max-time 30 "https://$SRV/test/" | grep -q "comment-form\|Comment Form"; then
+		echo "DEBUG: ✅ SUCCESS - Comment form expansion is working"
+		COMMENT_EXPANSION_TEST=true
+	else
+		echo "DEBUG: ❌ FAILED - Comment form expansion is not working"
+		COMMENT_EXPANSION_TEST=false
+	fi
+	
+	# Summary
+	echo "DEBUG: === COMMENT SYSTEM TEST SUMMARY ==="
+	if [ "$COMMENT_SUBMISSION_TEST" = true ] && [ "$COMMENT_STORAGE_TEST" = true ] && [ "$COMMENT_ADMIN_TEST" = true ] && [ "$COMMENT_EXPANSION_TEST" = true ]; then
+		echo "DEBUG: 🎉 ALL COMMENT TESTS PASSED - Comment system is working correctly"
+		echo "DEBUG: - Comment submission via cgi-bin: ✅"
+		echo "DEBUG: - Comment storage: ✅"
+		echo "DEBUG: - Comment admin panel: ✅"
+		echo "DEBUG: - Comment form expansion: ✅"
+	else
+		echo "DEBUG: ⚠️  SOME COMMENT TESTS FAILED"
+		echo "DEBUG: - Comment submission via cgi-bin: $COMMENT_SUBMISSION_TEST"
+		echo "DEBUG: - Comment storage: $COMMENT_STORAGE_TEST"
+		echo "DEBUG: - Comment admin panel: $COMMENT_ADMIN_TEST"
+		echo "DEBUG: - Comment form expansion: $COMMENT_EXPANSION_TEST"
+		tail_server_log
+	fi
+	
+	# Clean up test files
+	echo "DEBUG: Cleaning up comment test files..."
+	ssh root@$SRV "rm -rf /var/www/html/test || true"
+	
+	echo === END COMMENT SYSTEM TESTS ===
 	
 	if [ -z "$KEEPALIVE" ]
 	then
