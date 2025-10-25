@@ -1,0 +1,1180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Worm Spreadsheet</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f5f5;
+            overflow: hidden;
+        }
+
+        .header {
+            background: #2c3e50;
+            color: white;
+            padding: 10px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .logo {
+            height: 40px;
+            width: auto;
+            filter: brightness(0) invert(1); /* Make logo white */
+        }
+
+        .header h1 {
+            font-size: 1.5em;
+            margin: 0;
+        }
+
+        .filename-input {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .filename-input input {
+            padding: 8px 12px;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+            width: 200px;
+        }
+
+        .filename-input button {
+            padding: 8px 16px;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .filename-input button:hover {
+            background: #2980b9;
+        }
+
+        .status {
+            font-size: 12px;
+            color: #bdc3c7;
+        }
+
+        .offline-warning {
+            background: #f8d7da;
+            color: #721c24;
+            border: 2px solid #f5c6cb;
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 1.1em;
+            font-weight: bold;
+            text-align: center;
+            margin: 10px 0;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.7; }
+            100% { opacity: 1; }
+        }
+
+        .spreadsheet-container {
+            height: calc(100vh - 60px);
+            overflow: hidden;
+        }
+
+        .spreadsheet {
+            height: 100%;
+            overflow: auto;
+            background: white;
+            position: relative;
+        }
+
+        .spreadsheet-table {
+            border-collapse: collapse;
+            min-width: 100%;
+            position: relative;
+        }
+
+        .spreadsheet-table thead {
+            position: sticky;
+            top: 0;
+            z-index: 5;
+        }
+
+        .spreadsheet-table tbody tr:first-child td {
+            position: sticky;
+            top: 0;
+            background: #e8f5e8;
+            z-index: 3;
+        }
+
+        .spreadsheet-table tbody tr td:first-child {
+            position: sticky;
+            left: 0;
+            background: #e8f5e8;
+            z-index: 3;
+        }
+
+        .spreadsheet-table tbody tr:first-child td:first-child {
+            z-index: 6;
+        }
+
+        .row-number {
+            background: #34495e !important;
+            color: white;
+            font-weight: bold;
+            text-align: center;
+            min-width: 60px;
+            width: 60px;
+        }
+
+        .spreadsheet-table th {
+            background: #34495e;
+            color: white;
+            font-weight: bold;
+            text-align: center;
+            border: 1px solid #2c3e50;
+            padding: 4px 8px;
+            min-width: 80px;
+        }
+
+        .spreadsheet-table td {
+            border: 1px solid #ddd;
+            padding: 0;
+            position: relative;
+            min-width: 80px;
+            height: 30px;
+        }
+
+        .cell {
+            width: 100%;
+            height: 100%;
+            border: none;
+            padding: 4px 8px;
+            font-size: 12px;
+            background: transparent;
+            outline: none;
+        }
+
+        .cell:focus {
+            background: #e3f2fd;
+            border: 2px solid #2196f3;
+        }
+
+        .title-cell {
+            background: #e8f5e8 !important;
+            font-weight: bold;
+            color: #2e7d32;
+        }
+
+        .title-cell:focus {
+            background: #c8e6c9 !important;
+        }
+
+        .sum-cell {
+            background: #fff3e0 !important;
+            font-weight: bold;
+            color: #f57c00;
+        }
+
+        .sum-cell:focus {
+            background: #ffe0b2 !important;
+        }
+
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 18px;
+            color: #666;
+        }
+
+        .error {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 16px;
+            color: #e74c3c;
+            text-align: center;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 12px;
+            height: 12px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 6px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-left">
+            <img src="/worm.png" alt="Worm Logo" class="logo">
+            <h1>Worm Spreadsheet</h1>
+        </div>
+        <div class="filename-input">
+            <input type="text" id="filenameInput" placeholder="Enter filename (e.g., mysheet.log)" value="sample.log">
+            <button onclick="loadSpreadsheet()">Load</button>
+            <button onclick="refreshSpreadsheet()" style="margin-left: 10px;">Refresh</button>
+            <select id="exportFormat" style="margin-left: 10px; padding: 5px;">
+                <option value="log">Worm Log (.log)</option>
+                <option value="csv">CSV (.csv)</option>
+                <option value="json">JSON (.json)</option>
+            </select>
+            <button onclick="downloadSpreadsheet()" style="margin-left: 10px; background: #28a745;">Download</button>
+        </div>
+        <div class="status" id="status">Ready</div>
+        <div class="offline-warning" id="offlineWarning" style="display: none;">
+            ⚠️ OFFLINE MODE - Data is being saved locally only. Server connection failed!
+        </div>
+    </div>
+
+    <div class="spreadsheet-container" id="spreadsheetContainer">
+        <div class="loading" id="loading">Loading...</div>
+        <div class="error hidden" id="error"></div>
+        
+        <div class="spreadsheet" id="spreadsheet"></div>
+    </div>
+
+    <script>
+        class WormSpreadsheet {
+            constructor() {
+                this.data = {};
+                this.titles = {};
+                this.lastReadPosition = 0;
+                this.eventSource = null;
+                this.filename = '';
+                this.maxRows = 100;
+                this.maxCols = 26;
+                
+                this.initializeEmptySpreadsheet();
+            }
+
+            initializeEmptySpreadsheet() {
+                // Create empty spreadsheet structure
+                for (let row = 1; row <= this.maxRows; row++) {
+                    this.data[row] = {};
+                    for (let col = 1; col <= this.maxCols; col++) {
+                        this.data[row][col] = '';
+                    }
+                }
+                this.renderSpreadsheet();
+            }
+
+            getColumnLetter(col) {
+                return String.fromCharCode(64 + col);
+            }
+
+            getColumnNumber(letter) {
+                return letter.charCodeAt(0) - 64;
+            }
+
+            parseCellReference(ref) {
+                const match = ref.match(/^([A-Z]+)(\d+)$/);
+                if (match) {
+                    const col = this.getColumnNumber(match[1]);
+                    const row = parseInt(match[2]);
+                    return { row, col };
+                }
+                return null;
+            }
+
+            async loadSpreadsheet(filename) {
+                this.filename = filename;
+                this.showLoading();
+                
+                try {
+                    // Load initial data
+                    await this.loadData();
+                    this.renderSpreadsheet();
+                    this.startPolling();
+                    this.hideLoading();
+                    this.updateStatus(`Loaded ${filename}`);
+                } catch (error) {
+                    this.showError(`Failed to load ${filename}: ${error.message}`);
+                }
+            }
+
+            async loadData() {
+                // Clear existing data before loading
+                this.clearSpreadsheetData();
+                
+                try {
+                    // Try to read the file directly from worm directory first
+                    console.log('Trying to load from worm directory:', `/worm/${this.filename}`);
+                    
+                    // Add timeout to prevent hanging
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+                    
+                    const fileResponse = await fetch(`/worm/${this.filename}`, {
+                        signal: controller.signal
+                    });
+                    
+                    clearTimeout(timeoutId);
+                    console.log('Worm directory response:', fileResponse.status, fileResponse.statusText);
+                    
+                    if (fileResponse.ok) {
+                        const text = await fileResponse.text();
+                        console.log('Loaded data from worm directory:', text);
+                        this.parseLogData(text);
+                        this.lastReadPosition = text.length;
+                        this.hideOfflineWarning();
+                        return;
+                    }
+                    
+                    // If direct file access fails, try worm extension API
+                    console.log('Trying worm extension API...');
+                    
+                    // Add timeout to prevent hanging
+                    const controller2 = new AbortController();
+                    const timeoutId2 = setTimeout(() => controller2.abort(), 5000); // 5 second timeout
+                    
+                    const response = await fetch(`/cgi-bin/worm?action=info&filename=${this.filename}`, {
+                        signal: controller2.signal
+                    });
+                    
+                    clearTimeout(timeoutId2);
+                    console.log('Worm extension response:', response.status, response.statusText);
+                    
+                    if (!response.ok) {
+                        throw new Error('File not found');
+                    }
+                    
+                    // Read the entire file via worm extension
+                    const controller3 = new AbortController();
+                    const timeoutId3 = setTimeout(() => controller3.abort(), 5000); // 5 second timeout
+                    
+                    const fileResponse2 = await fetch(`/worm/${this.filename}`, {
+                        signal: controller3.signal
+                    });
+                    
+                    clearTimeout(timeoutId3);
+                    
+                    if (!fileResponse2.ok) {
+                        throw new Error('Could not read file');
+                    }
+                    
+                    const text = await fileResponse2.text();
+                    this.parseLogData(text);
+                    this.lastReadPosition = text.length;
+                    this.hideOfflineWarning();
+                } catch (error) {
+                    console.log('Server not available, trying local storage fallback:', error.message);
+                    
+                    // Check if it's a timeout or network error
+                    if (error.name === 'AbortError') {
+                        console.log('Server request timed out');
+                        this.updateStatus('Server timeout, using local storage');
+                    } else {
+                        console.log('Server request failed:', error.message);
+                        this.updateStatus('Server unavailable, using local storage');
+                    }
+                    
+                    // Fallback to local storage
+                    this.loadFromLocalStorage();
+                    this.showOfflineWarning();
+                }
+            }
+
+            loadFromLocalStorage() {
+                try {
+                    const key = `worm_spreadsheet_${this.filename}`;
+                    console.log('Loading from local storage with key:', key);
+                    const data = localStorage.getItem(key);
+                    if (data) {
+                        console.log('Found local storage data, length:', data.length);
+                        this.parseLogData(data);
+                        this.lastReadPosition = data.length;
+                        console.log('Loaded from local storage:', data);
+                    } else {
+                        console.log('No local storage data found, starting with empty spreadsheet');
+                        this.lastReadPosition = 0;
+                    }
+                } catch (error) {
+                    console.error('Failed to load from local storage:', error);
+                    this.lastReadPosition = 0;
+                }
+            }
+
+            parseLogData(text) {
+                console.log('Parsing log data:', text);
+                const lines = text.split('\n');
+                let parsedCount = 0;
+                for (const line of lines) {
+                    if (line.trim()) {
+                        this.parseLogLine(line.trim());
+                        parsedCount++;
+                    }
+                }
+                console.log(`Parsed ${parsedCount} lines from log data`);
+            }
+
+            parseLogLine(line) {
+                // Parse timestamp and content
+                const match = line.match(/^\[(\d+)\]\s*(.+)$/);
+                if (match) {
+                    const content = match[2];
+                    this.processCommand(content);
+                }
+            }
+
+            processCommand(command) {
+                // Handle cell assignments like "E22 Some text"
+                const cellMatch = command.match(/^([A-Z]+\d+)\s+(.+)$/);
+                if (cellMatch) {
+                    const cellRef = cellMatch[1];
+                    const value = cellMatch[2];
+                    const cell = this.parseCellReference(cellRef);
+                    if (cell) {
+                        this.setCellValue(cell.row, cell.col, value);
+                    }
+                    return;
+                }
+
+                // Handle titles like "TITLE E Some title" or "TITLE 22 Some Title"
+                const titleMatch = command.match(/^TITLE\s+([A-Z]+|\d+)\s+(.+)$/);
+                if (titleMatch) {
+                    const ref = titleMatch[1];
+                    const title = titleMatch[2];
+                    
+                    if (/^\d+$/.test(ref)) {
+                        // Row title
+                        this.titles[`row_${ref}`] = title;
+                    } else {
+                        // Column title
+                        this.titles[`col_${ref}`] = title;
+                    }
+                    return;
+                }
+            }
+
+            setCellValue(row, col, value) {
+                if (row >= 1 && row <= this.maxRows && col >= 1 && col <= this.maxCols) {
+                    this.data[row][col] = value;
+                }
+            }
+
+            getCellValue(row, col) {
+                if (row >= 1 && row <= this.maxRows && col >= 1 && col <= this.maxCols) {
+                    return this.data[row][col] || '';
+                }
+                return '';
+            }
+
+            async saveChange(row, col, value) {
+                if (!this.filename) {
+                    console.error('No filename set for saving');
+                    this.updateStatus('No filename set');
+                    return;
+                }
+                
+                const cellRef = `${this.getColumnLetter(col)}${row}`;
+                const command = `${cellRef} ${value}`;
+                
+                console.log('Saving change:', { cellRef, value, command, filename: this.filename });
+                
+                try {
+                    const url = `/cgi-bin/worm?action=append&filename=${this.filename}&data=${encodeURIComponent(command)}`;
+                    console.log('Saving to server URL:', url);
+                    
+                    // Add timeout to prevent hanging
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+                    
+                    const response = await fetch(url, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                        },
+                        signal: controller.signal,
+                        mode: 'cors',
+                        credentials: 'omit'
+                    });
+                    
+                    clearTimeout(timeoutId);
+                    
+                    console.log('Server save response:', response.status, response.statusText);
+                    
+                    if (response.ok) {
+                        const responseText = await response.text();
+                        console.log('Server save success:', responseText);
+                        this.updateStatus(`Saved to server: ${cellRef} = ${value}`);
+                        
+                        // Hide offline warning since server is working
+                        this.hideOfflineWarning();
+                        
+                        // Also save to local storage as backup
+                        this.saveToLocalStorage(cellRef, value);
+                        return;
+                    } else {
+                        const errorText = await response.text();
+                        console.error('Server save failed:', errorText);
+                        throw new Error(`Server error: ${response.status} ${response.statusText}`);
+                    }
+                } catch (error) {
+                    console.error('Server save failed, falling back to local storage:', error);
+                    
+                    // Check if it's a timeout or network error
+                    if (error.name === 'AbortError') {
+                        console.log('Server request timed out');
+                        this.updateStatus(`Saved locally: ${cellRef} = ${value} (server timeout)`);
+                    } else {
+                        console.log('Server request failed:', error.message);
+                        this.updateStatus(`Saved locally: ${cellRef} = ${value} (server unavailable)`);
+                    }
+                    
+                    // Fallback to local storage when server is unavailable
+                    this.saveToLocalStorage(cellRef, value);
+                    this.showOfflineWarning();
+                }
+            }
+
+            saveToLocalStorage(cellRef, value) {
+                try {
+                    const key = `worm_spreadsheet_${this.filename}`;
+                    const existing = localStorage.getItem(key) || '';
+                    const newEntry = `[${Date.now()}] ${cellRef} ${value}\n`;
+                    localStorage.setItem(key, existing + newEntry);
+                    console.log('Saved to local storage:', newEntry.trim());
+                } catch (error) {
+                    console.error('Failed to save to local storage:', error);
+                }
+            }
+
+            startEventStream() {
+                if (this.eventSource) {
+                    this.eventSource.close();
+                }
+                
+                try {
+                    const url = `/cgi-bin/worm?action=stream&filename=${this.filename}`;
+                    console.log('Starting event stream:', url);
+                    
+                    this.eventSource = new EventSource(url);
+                    
+                    this.eventSource.onopen = () => {
+                        console.log('Event stream opened');
+                        this.updateStatus('Connected to server');
+                    };
+                    
+                    this.eventSource.onmessage = (event) => {
+                        try {
+                            const data = JSON.parse(event.data);
+                            console.log('Received SSE data:', data);
+                            
+                            if (data.type === 'init') {
+                                // Initial data load
+                                this.clearSpreadsheetData();
+                                this.parseLogData(data.content);
+                                this.lastReadPosition = data.size;
+                                this.renderSpreadsheet();
+                                this.updateStatus(`Loaded ${this.filename} via SSE`);
+                            } else if (data.type === 'update') {
+                                // Incremental update
+                                this.parseLogData(data.content);
+                                this.lastReadPosition += data.content.length;
+                                this.renderSpreadsheet();
+                                this.updateStatus(`Updated via SSE (${new Date().toLocaleTimeString()})`);
+                            }
+                        } catch (error) {
+                            console.error('Error parsing SSE data:', error);
+                        }
+                    };
+                    
+                    this.eventSource.onerror = (error) => {
+                        console.error('Event stream error:', error);
+                        this.updateStatus('SSE connection error, falling back to polling');
+                        this.showOfflineWarning();
+                        this.startPollingFallback();
+                    };
+                    
+                } catch (error) {
+                    console.error('Failed to start event stream:', error);
+                    this.startPollingFallback();
+                }
+                
+                // Add a timeout to detect if SSE fails to connect
+                setTimeout(() => {
+                    if (this.eventSource && this.eventSource.readyState === EventSource.CONNECTING) {
+                        console.log('SSE connection timeout, falling back to polling');
+                        this.eventSource.close();
+                        this.showOfflineWarning();
+                        this.startPollingFallback();
+                    }
+                }, 3000);
+            }
+
+            startPollingFallback() {
+                // Fallback to polling if SSE fails
+                console.log('Starting polling fallback');
+                
+                // First, try to load data from local storage
+                this.loadFromLocalStorage();
+                
+                // Then start polling for server updates
+                this.pollingInterval = setInterval(() => {
+                    this.pollForUpdates();
+                }, 2000);
+            }
+
+            async pollForUpdates() {
+                try {
+                    // Try HTTP Range first
+                    const response = await fetch(`/worm/${this.filename}`, {
+                        headers: {
+                            'Range': `bytes=${this.lastReadPosition}-`
+                        }
+                    });
+                    
+                    if (response.status === 206) { // Partial content
+                        const text = await response.text();
+                        if (text) {
+                            console.log('Polling: Got new data via Range request:', text);
+                            this.parseLogData(text);
+                            this.lastReadPosition += text.length;
+                            this.renderSpreadsheet();
+                            this.updateStatus(`Updated from server (${new Date().toLocaleTimeString()})`);
+                        }
+                    } else if (response.status === 200) {
+                        // Full content - file might have been truncated or Range not supported
+                        const text = await response.text();
+                        if (text.length > this.lastReadPosition) {
+                            const newContent = text.substring(this.lastReadPosition);
+                            console.log('Polling: Got new data via full request:', newContent);
+                            this.parseLogData(newContent);
+                            this.lastReadPosition = text.length;
+                            this.renderSpreadsheet();
+                            this.updateStatus(`Updated from server (${new Date().toLocaleTimeString()})`);
+                        }
+                    } else {
+                        console.log('Polling: Unexpected response status:', response.status);
+                    }
+                } catch (error) {
+                    console.log('Polling: Server unavailable, skipping local storage polling');
+                    // Local storage changes are handled by storage event listener, not polling
+                }
+            }
+
+
+            startPolling() {
+                // Try SSE first, fall back to polling if needed
+                this.startEventStream();
+                
+                // Listen for changes from other browser tabs
+                window.addEventListener('storage', (e) => {
+                    if (e.key === `worm_spreadsheet_${this.filename}` && e.newValue) {
+                        console.log('Storage event: Data changed in another tab');
+                        this.loadFromLocalStorage();
+                        this.renderSpreadsheet();
+                    }
+                });
+            }
+
+            stopPolling() {
+                if (this.pollingInterval) {
+                    clearInterval(this.pollingInterval);
+                    this.pollingInterval = null;
+                }
+                if (this.eventSource) {
+                    this.eventSource.close();
+                    this.eventSource = null;
+                }
+            }
+
+            calculateRowSum(row) {
+                let sum = 0;
+                for (let col = 1; col <= this.maxCols; col++) {
+                    const value = this.getCellValue(row, col);
+                    const num = parseFloat(value);
+                    if (!isNaN(num)) {
+                        sum += num;
+                    }
+                }
+                return sum;
+            }
+
+            calculateColumnSum(col) {
+                let sum = 0;
+                for (let row = 1; row <= this.maxRows; row++) {
+                    const value = this.getCellValue(row, col);
+                    const num = parseFloat(value);
+                    if (!isNaN(num)) {
+                        sum += num;
+                    }
+                }
+                return sum;
+            }
+
+            calculateGlobalSum() {
+                let sum = 0;
+                for (let row = 1; row <= this.maxRows; row++) {
+                    for (let col = 1; col <= this.maxCols; col++) {
+                        const value = this.getCellValue(row, col);
+                        const num = parseFloat(value);
+                        if (!isNaN(num)) {
+                            sum += num;
+                        }
+                    }
+                }
+                return sum;
+            }
+
+            hasDataInRow(row) {
+                for (let col = 1; col <= this.maxCols; col++) {
+                    const value = this.getCellValue(row, col);
+                    if (value && value.trim() !== '') {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            hasDataInColumn(col) {
+                for (let row = 1; row <= this.maxRows; row++) {
+                    const value = this.getCellValue(row, col);
+                    if (value && value.trim() !== '') {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            shouldShowRowSum(row) {
+                // Show row sum if there's data in the row
+                return this.hasDataInRow(row);
+            }
+
+            shouldShowColumnSum(col) {
+                // Show column sum if there's data in the column
+                return this.hasDataInColumn(col);
+            }
+
+            shouldShowGlobalSum() {
+                // Show global sum if there's any data
+                for (let row = 1; row <= this.maxRows; row++) {
+                    if (this.hasDataInRow(row)) return true;
+                }
+                return false;
+            }
+
+            renderSpreadsheet() {
+                this.renderCells();
+            }
+
+
+            renderCells() {
+                const container = document.getElementById('spreadsheet');
+                container.innerHTML = '';
+                
+                const table = document.createElement('table');
+                table.className = 'spreadsheet-table';
+                
+                // Create thead for column headers
+                const thead = document.createElement('thead');
+                const headerRow = document.createElement('tr');
+                
+                // Add empty corner cell
+                const cornerCell = document.createElement('th');
+                cornerCell.textContent = '';
+                headerRow.appendChild(cornerCell);
+                
+                // Add column headers
+                for (let col = 1; col <= this.maxCols; col++) {
+                    const th = document.createElement('th');
+                    th.textContent = this.getColumnLetter(col);
+                    headerRow.appendChild(th);
+                }
+                thead.appendChild(headerRow);
+                table.appendChild(thead);
+                
+                // Create tbody for data rows
+                const tbody = document.createElement('tbody');
+                
+                for (let row = 1; row <= this.maxRows; row++) {
+                    const tr = document.createElement('tr');
+                    
+                    // Add row number in first column
+                    const rowHeader = document.createElement('td');
+                    rowHeader.textContent = row;
+                    rowHeader.className = 'row-number';
+                    tr.appendChild(rowHeader);
+                    
+                    for (let col = 1; col <= this.maxCols; col++) {
+                        const td = document.createElement('td');
+                        const input = document.createElement('input');
+                        input.className = 'cell';
+                        input.type = 'text';
+                        input.value = this.getCellValue(row, col);
+                        
+                        // Check if this is a title cell
+                        if (this.titles[`row_${row}`] || this.titles[`col_${this.getColumnLetter(col)}`]) {
+                            input.className += ' title-cell';
+                        }
+                        
+                        // Check if this is a sum cell
+                        let isSumCell = false;
+                        if (col === this.maxCols && this.shouldShowRowSum(row)) {
+                            // Row sum
+                            input.className += ' sum-cell';
+                            input.readOnly = true;
+                            input.value = this.calculateRowSum(row);
+                            isSumCell = true;
+                        } else if (row === this.maxRows && this.shouldShowColumnSum(col)) {
+                            // Column sum
+                            input.className += ' sum-cell';
+                            input.readOnly = true;
+                            input.value = this.calculateColumnSum(col);
+                            isSumCell = true;
+                        } else if (col === this.maxCols && row === this.maxRows && this.shouldShowGlobalSum()) {
+                            // Global sum
+                            input.className += ' sum-cell';
+                            input.readOnly = true;
+                            input.value = this.calculateGlobalSum();
+                            isSumCell = true;
+                        }
+                        
+                        if (!isSumCell) {
+                            // Regular cell
+                            input.addEventListener('blur', () => {
+                                this.handleCellChange(row, col, input.value);
+                            });
+                            
+                            input.addEventListener('keypress', (e) => {
+                                if (e.key === 'Enter') {
+                                    input.blur();
+                                }
+                            });
+                        }
+                        
+                        td.appendChild(input);
+                        tr.appendChild(td);
+                    }
+                    
+                    tbody.appendChild(tr);
+                }
+                
+                table.appendChild(tbody);
+                container.appendChild(table);
+            }
+
+            async handleCellChange(row, col, value) {
+                const oldValue = this.getCellValue(row, col);
+                if (oldValue !== value) {
+                    this.setCellValue(row, col, value);
+                    await this.saveChange(row, col, value);
+                    this.renderCells(); // Re-render to update sums
+                }
+            }
+
+            showLoading() {
+                document.getElementById('loading').classList.remove('hidden');
+                document.getElementById('error').classList.add('hidden');
+            }
+
+            hideLoading() {
+                document.getElementById('loading').classList.add('hidden');
+            }
+
+            showError(message) {
+                document.getElementById('error').textContent = message;
+                document.getElementById('error').classList.remove('hidden');
+                document.getElementById('loading').classList.add('hidden');
+            }
+
+            updateStatus(message) {
+                document.getElementById('status').textContent = message;
+            }
+
+            showOfflineWarning() {
+                const warning = document.getElementById('offlineWarning');
+                warning.style.display = 'block';
+                console.log('Showing offline warning - server not available');
+            }
+
+            hideOfflineWarning() {
+                const warning = document.getElementById('offlineWarning');
+                warning.style.display = 'none';
+                console.log('Hiding offline warning - server connection restored');
+            }
+
+            clearSpreadsheetData() {
+                // Clear all data structures
+                this.data = {};
+                this.titles = {};
+                this.lastReadPosition = 0;
+                
+                // Reinitialize empty spreadsheet structure
+                for (let row = 1; row <= this.maxRows; row++) {
+                    this.data[row] = {};
+                    for (let col = 1; col <= this.maxCols; col++) {
+                        this.data[row][col] = '';
+                    }
+                }
+                
+                console.log('Spreadsheet data cleared');
+            }
+
+            async downloadSpreadsheet() {
+                if (!this.filename) {
+                    alert('Please load a spreadsheet first');
+                    return;
+                }
+
+                const format = document.getElementById('exportFormat').value;
+                let data, filename, mimeType;
+
+                try {
+                    if (format === 'log') {
+                        // Try to get data from server first
+                        const response = await fetch(`/worm/${this.filename}`);
+                        if (response.ok) {
+                            data = await response.text();
+                            filename = this.filename;
+                            mimeType = 'text/plain';
+                            this.updateStatus(`Downloaded ${this.filename} from server`);
+                        } else {
+                            throw new Error('Server file not found');
+                        }
+                    } else {
+                        // Generate data in requested format
+                        const result = this.generateExportData(format);
+                        data = result.data;
+                        filename = result.filename;
+                        mimeType = result.mimeType;
+                        this.updateStatus(`Generated ${filename}`);
+                    }
+                } catch (error) {
+                    console.log('Server unavailable, generating from current data');
+                    if (format === 'log') {
+                        // Fallback to local storage
+                        const key = `worm_spreadsheet_${this.filename}`;
+                        data = localStorage.getItem(key);
+                        if (!data) {
+                            data = this.generateSpreadsheetData();
+                        }
+                        filename = this.filename;
+                        mimeType = 'text/plain';
+                        this.updateStatus(`Downloaded ${this.filename} from local storage`);
+                    } else {
+                        // Generate data in requested format
+                        const result = this.generateExportData(format);
+                        data = result.data;
+                        filename = result.filename;
+                        mimeType = result.mimeType;
+                        this.updateStatus(`Generated ${filename}`);
+                    }
+                }
+
+                this.downloadFile(data, filename, mimeType);
+            }
+
+            generateSpreadsheetData() {
+                const lines = [];
+                
+                // Add titles
+                for (const [key, title] of Object.entries(this.titles)) {
+                    if (key.startsWith('row_')) {
+                        const row = key.replace('row_', '');
+                        lines.push(`[${Date.now()}] TITLE ${row} ${title}`);
+                    } else if (key.startsWith('col_')) {
+                        const col = key.replace('col_', '');
+                        lines.push(`[${Date.now()}] TITLE ${col} ${title}`);
+                    }
+                }
+                
+                // Add cell data
+                for (let row = 1; row <= this.maxRows; row++) {
+                    for (let col = 1; col <= this.maxCols; col++) {
+                        const value = this.getCellValue(row, col);
+                        if (value && value.trim() !== '') {
+                            const cellRef = `${this.getColumnLetter(col)}${row}`;
+                            lines.push(`[${Date.now()}] ${cellRef} ${value}`);
+                        }
+                    }
+                }
+                
+                return lines.join('\n');
+            }
+
+            generateExportData(format) {
+                const baseFilename = this.filename.replace(/\.[^/.]+$/, ''); // Remove extension
+                
+                switch (format) {
+                    case 'csv':
+                        return {
+                            data: this.generateCSV(),
+                            filename: `${baseFilename}.csv`,
+                            mimeType: 'text/csv'
+                        };
+                    case 'json':
+                        return {
+                            data: this.generateJSON(),
+                            filename: `${baseFilename}.json`,
+                            mimeType: 'application/json'
+                        };
+                    case 'log':
+                    default:
+                        return {
+                            data: this.generateSpreadsheetData(),
+                            filename: this.filename,
+                            mimeType: 'text/plain'
+                        };
+                }
+            }
+
+            generateCSV() {
+                const rows = [];
+                
+                // Add column headers
+                const headerRow = ['Row'];
+                for (let col = 1; col <= this.maxCols; col++) {
+                    const colTitle = this.titles[`col_${this.getColumnLetter(col)}`] || this.getColumnLetter(col);
+                    headerRow.push(colTitle);
+                }
+                rows.push(headerRow.join(','));
+                
+                // Add data rows
+                for (let row = 1; row <= this.maxRows; row++) {
+                    const rowData = [row];
+                    let hasData = false;
+                    
+                    for (let col = 1; col <= this.maxCols; col++) {
+                        const value = this.getCellValue(row, col);
+                        // Escape CSV values
+                        const escapedValue = value ? `"${value.replace(/"/g, '""')}"` : '';
+                        rowData.push(escapedValue);
+                        if (value) hasData = true;
+                    }
+                    
+                    // Only include rows that have data
+                    if (hasData) {
+                        rows.push(rowData.join(','));
+                    }
+                }
+                
+                return rows.join('\n');
+            }
+
+            generateJSON() {
+                const data = {
+                    filename: this.filename,
+                    exported: new Date().toISOString(),
+                    titles: this.titles,
+                    cells: {},
+                    metadata: {
+                        maxRows: this.maxRows,
+                        maxCols: this.maxCols,
+                        totalCells: 0
+                    }
+                };
+                
+                let cellCount = 0;
+                for (let row = 1; row <= this.maxRows; row++) {
+                    for (let col = 1; col <= this.maxCols; col++) {
+                        const value = this.getCellValue(row, col);
+                        if (value && value.trim() !== '') {
+                            const cellRef = `${this.getColumnLetter(col)}${row}`;
+                            data.cells[cellRef] = value;
+                            cellCount++;
+                        }
+                    }
+                }
+                
+                data.metadata.totalCells = cellCount;
+                return JSON.stringify(data, null, 2);
+            }
+
+            downloadFile(data, filename, mimeType = 'text/plain') {
+                const blob = new Blob([data], { type: mimeType });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            }
+        }
+
+        // Initialize the spreadsheet
+        const spreadsheet = new WormSpreadsheet();
+
+        // Global function for the load button
+        function loadSpreadsheet() {
+            const filename = document.getElementById('filenameInput').value.trim();
+            console.log('loadSpreadsheet called with filename:', filename);
+            if (filename) {
+                spreadsheet.loadSpreadsheet(filename);
+            } else {
+                alert('Please enter a filename');
+            }
+        }
+
+        // Global function for the refresh button
+        function refreshSpreadsheet() {
+            if (spreadsheet.filename) {
+                console.log('Manual refresh triggered for filename:', spreadsheet.filename);
+                // Reload the entire spreadsheet instead of just polling for updates
+                spreadsheet.loadSpreadsheet(spreadsheet.filename);
+            } else {
+                alert('Please load a spreadsheet first');
+            }
+        }
+
+        // Global function for the download button
+        function downloadSpreadsheet() {
+            if (spreadsheet.filename) {
+                console.log('Download triggered');
+                spreadsheet.downloadSpreadsheet();
+            } else {
+                alert('Please load a spreadsheet first');
+            }
+        }
+
+        // Load default spreadsheet on page load
+        window.addEventListener('load', () => {
+            console.log('Page loaded, attempting to load default spreadsheet');
+            loadSpreadsheet();
+        });
+    </script>
+</body>
+</html>
