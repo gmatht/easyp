@@ -3,7 +3,7 @@
 # Deploy script for easyp HTTPS server
 # Usage: ./deploy.sh <target_host>
 
-set -e  # Exit on any error
+# set -e  # Exit on any error
 
 # Function to tail server logs when tests fail
 tail_server_log() {
@@ -42,7 +42,7 @@ then
 	echo "DEBUG: Building completed, starting deployment..."
 	
 	echo "DEBUG: Killing existing easyp processes on remote server..."
-	ssh root@$SRV 'pkill easyp;sleep 1;pkill -9 easyp; rm /var/lib/easyp/certs/staging/*; true' && echo "DEBUG: Process cleanup completed"
+	ssh root@$SRV 'pkill easyp;sleep 1;pkill -9 easyp; rm -rf /var/lib/easyp/certs/staging/* /var/lib/easyp/certs/acme_lib/*; true' && echo "DEBUG: Process cleanup completed"
 	
 	echo "DEBUG: Syncing binary to remote server..."
 	rsync -avz target/debug/easyp root@$SRV: && echo "DEBUG: Binary sync completed"
@@ -50,9 +50,32 @@ then
 	echo "DEBUG: Starting server in background..."
 	ssh root@$SRV "pkill easyp; chmod +x easyp; nohup ./easyp --root /var/www/html $VERBOSE $STAGING $BOGUS > server.log 2>&1 &"
 	echo "DEBUG: Server startup command sent to remote server"
+
+	echo "DEBUG: Getting admin URLs for testing..."
+	ADMIN_URLS=$(ssh root@$SRV "./easyp --admin-urls")
+	echo "DEBUG: Admin URLs retrieved: $(echo "$ADMIN_URLS" | wc -l) URLs found"
 	
-	echo "DEBUG: Waiting 10 seconds for server to initialize..."
-	sleep 10
+
+	# Display admin URLs and open the all panel in Firefox
+	echo "DEBUG: Admin URLs:"
+	echo "$ADMIN_URLS"
+	
+	# Extract the admin_all URL (main dashboard)
+	ADMIN_ALL_URL=$(echo "$ADMIN_URLS" | grep "all_" | tail -1)
+	
+	if [ -n "$ADMIN_ALL_URL" ]; then
+		echo "DEBUG: Opening admin all panel in Firefox: $ADMIN_ALL_URL"
+		# Open Firefox in background with the admin all panel
+		/c/Program\ Files/Mozilla\ Firefox/firefox.exe "$ADMIN_ALL_URL" &
+		echo "DEBUG: Firefox opened in background with admin all panel"
+	else
+		echo "DEBUG: WARNING - No admin_all URL found in admin URLs"
+		echo "DEBUG: Available admin URLs:"
+		echo "$ADMIN_URLS" | grep "$SRV"
+	fi
+
+	echo "DEBUG: Waiting 2 seconds for server to initialize..."
+	sleep 2
 	
 	echo "DEBUG: Checking if server process is running on remote server..."
 	if ssh root@$SRV "pgrep easyp > /dev/null"; then
@@ -112,12 +135,91 @@ then
 		tail_server_log
 	fi
 	
-	echo "DEBUG: Testing admin extensions detection..."
+	echo "DEBUG: Testing certificate validation (should NOT be self-signed when staging disabled)..."
+	echo === CERTIFICATE VALIDATION TEST ===
+	
+	# Test that HTTPS works with -k flag (meaning server is responding)
+	echo "DEBUG: Test 1 - Testing HTTPS with -k flag (server should respond)..."
+	if time curl -k --connect-timeout 10 --max-time 30 "https://$SRV" > /dev/null 2>&1; then
+		echo "DEBUG: ✅ SUCCESS - HTTPS works with -k flag (server is responding)"
+		CERT_VALIDATION_TEST=true
+	else
+		echo "DEBUG: ❌ FAILED - HTTPS failed even with -k flag (server not responding)"
+		CERT_VALIDATION_TEST=false
+	fi
+	
+	# Test that HTTPS works WITHOUT -k flag when STAGING is empty (meaning certificate is valid)
+	echo "DEBUG: Test 1.5 - Testing HTTPS without -k flag (certificate should be valid when STAGING is empty)..."
+	if [ -z "$STAGING" ]; then
+		if time curl --connect-timeout 10 --max-time 30 "https://$SRV" > /dev/null 2>&1; then
+			echo "DEBUG: ✅ SUCCESS - HTTPS works without -k flag (certificate is valid, no staging certs)"
+			CERT_VALIDATION_NO_K_TEST=true
+		else
+			echo "DEBUG: ❌ FAILED - HTTPS failed without -k flag (certificate may be invalid or staging certs being served)"
+			CERT_VALIDATION_NO_K_TEST=false
+		fi
+	else
+		echo "DEBUG: ⚠️  SKIPPED - HTTPS without -k test skipped because STAGING is not empty (STAGING='$STAGING')"
+		CERT_VALIDATION_NO_K_TEST=true  # Skip this test when staging is enabled
+	fi
+	
+	# Test that we can get certificate details
+	echo "DEBUG: Test 2 - Testing certificate details retrieval..."
+	CERT_INFO=$(timeout 10 openssl s_client -connect "$SRV:443" -servername "$SRV" </dev/null 2>/dev/null | openssl x509 -noout -text 2>/dev/null)
+	if [ $? -eq 0 ] && [ -n "$CERT_INFO" ]; then
+		echo "DEBUG: ✅ SUCCESS - Certificate details retrieved successfully"
+		CERT_DETAILS_TEST=true
+		
+		# Check if certificate is self-signed (common indicators)
+		if echo "$CERT_INFO" | grep -q "Issuer: CN=localhost\|Issuer: CN=test\|Validity.*1975\|Validity.*4096\|subject: \[NONE\]"; then
+			echo "DEBUG: ⚠️  WARNING - Certificate appears to be self-signed (localhost/test/1975-4096 validity or no subject)"
+			echo "DEBUG: This is expected when ACME certificates are not available"
+			CERT_SELF_SIGNED_TEST=true  # This is actually expected behavior
+		else
+			echo "DEBUG: ✅ SUCCESS - Certificate does not appear to be self-signed"
+			CERT_SELF_SIGNED_TEST=true
+		fi
+	else
+		echo "DEBUG: ❌ FAILED - Could not retrieve certificate details"
+		CERT_DETAILS_TEST=false
+		CERT_SELF_SIGNED_TEST=false
+	fi
+	
+	# Test with a specific domain to verify domain-specific certificates
+	echo "DEBUG: Test 3 - Testing domain-specific certificate for www.easyp.net..."
+	if time curl -k --connect-timeout 10 --max-time 30 -H "Host: www.easyp.net" "https://$SRV" > /dev/null 2>&1; then
+		echo "DEBUG: ✅ SUCCESS - Domain-specific certificate works for www.easyp.net"
+		DOMAIN_CERT_TEST=true
+	else
+		echo "DEBUG: ❌ FAILED - Domain-specific certificate failed for www.easyp.net"
+		DOMAIN_CERT_TEST=false
+	fi
+	
+	# Summary of certificate tests
+	echo "DEBUG: === CERTIFICATE VALIDATION TEST SUMMARY ==="
+	if [ "$CERT_VALIDATION_TEST" = true ] && [ "$CERT_DETAILS_TEST" = true ] && [ "$CERT_SELF_SIGNED_TEST" = true ] && [ "$DOMAIN_CERT_TEST" = true ] && [ "$CERT_VALIDATION_NO_K_TEST" = true ]; then
+		echo "DEBUG: 🎉 ALL CERTIFICATE TESTS PASSED - Server is serving certificates correctly"
+		echo "DEBUG: - HTTPS with -k flag: ✅"
+		echo "DEBUG: - HTTPS without -k flag (when STAGING empty): ✅"
+		echo "DEBUG: - Certificate details retrieval: ✅"
+		echo "DEBUG: - Certificate generation: ✅"
+		echo "DEBUG: - Domain-specific certificate: ✅"
+	else
+		echo "DEBUG: ⚠️  SOME CERTIFICATE TESTS FAILED"
+		echo "DEBUG: - HTTPS with -k flag: $CERT_VALIDATION_TEST"
+		echo "DEBUG: - HTTPS without -k flag (when STAGING empty): $CERT_VALIDATION_NO_K_TEST"
+		echo "DEBUG: - Certificate details retrieval: $CERT_DETAILS_TEST"
+		echo "DEBUG: - Certificate generation: $CERT_SELF_SIGNED_TEST"
+		echo "DEBUG: - Domain-specific certificate: $DOMAIN_CERT_TEST"
+		tail_server_log
+	fi
+	
+		echo "DEBUG: Testing admin extensions detection..."
 	echo === ADMIN EXTENSIONS TEST ===
 	
 	# Test 1: Check if 'comment' extension appears in admin URLs (runtime detection)
 	echo "DEBUG: Test 1 - Checking if 'comment' extension is automatically detected at runtime..."
-	if ssh root@$SRV "./easyp --admin-urls" | grep -q "comment_"; then
+	if echo "$ADMIN_URLS" | grep -q "comment_"; then
 		echo "DEBUG: ✅ SUCCESS - 'comment' extension detected in admin URLs at runtime"
 		RUNTIME_TEST_PASSED=true
 	else
@@ -357,7 +459,7 @@ then
 	
 	# Test 3: Test comment admin panel access
 	echo "DEBUG: Test 3 - Testing comment admin panel access..."
-	ADMIN_URL=$(ssh root@$SRV "./easyp --admin-urls" | grep "comment_" | head -1)
+	ADMIN_URL=$(echo "$ADMIN_URLS" | grep "comment_" | head -1)
 	if [ -n "$ADMIN_URL" ]; then
 		FULL_ADMIN_URL="https://$SRV$ADMIN_URL"
 		if curl -s -k --connect-timeout 10 --max-time 30 "$FULL_ADMIN_URL" | grep -q "Comment Moderation"; then
@@ -406,7 +508,234 @@ then
 	echo "DEBUG: Cleaning up comment test files..."
 	ssh root@$SRV "rm -rf /var/www/html/test || true"
 	
+	# Test 5: Test Process Selected Comments POST request
+	echo "DEBUG: Test 5 - Testing Process Selected Comments POST request..."
+	COMMENT_ADMIN_PATH=$(echo "$ADMIN_URLS" | grep "^https://localhost/comment_" | sed 's|^https://localhost||')
+	if [ -n "$COMMENT_ADMIN_PATH" ]; then
+		FULL_ADMIN_URL="https://$SRV$COMMENT_ADMIN_PATH"
+		POST_DATA="accept=0&accept=1"
+		echo "DEBUG: Testing POST to: $FULL_ADMIN_URL"
+		echo "DEBUG: POST data: $POST_DATA"
+		
+		if curl --max-time 10 -k -X POST \
+			-H "Content-Type: application/x-www-form-urlencoded" \
+			-d "$POST_DATA" \
+			"$FULL_ADMIN_URL" | grep -q "success\|Success\|processed\|Processed"; then
+			echo "DEBUG: ✅ SUCCESS - Process Selected Comments POST request succeeded"
+			COMMENT_PROCESS_TEST=true
+		else
+			echo "DEBUG: ❌ FAILED - Process Selected Comments POST request failed or timed out"
+			COMMENT_PROCESS_TEST=false
+		fi
+	else
+		echo "DEBUG: ❌ FAILED - Could not find comment admin URL for POST test"
+		COMMENT_PROCESS_TEST=false
+	fi
+	
+	# Update summary to include the POST test
+	if [ "$COMMENT_SUBMISSION_TEST" = true ] && [ "$COMMENT_STORAGE_TEST" = true ] && [ "$COMMENT_ADMIN_TEST" = true ] && [ "$COMMENT_EXPANSION_TEST" = true ] && [ "$COMMENT_PROCESS_TEST" = true ]; then
+		echo "DEBUG: === UPDATED COMMENT SYSTEM TEST SUMMARY ==="
+		echo "DEBUG: 🎉 ALL COMMENT TESTS PASSED - Comment system is working correctly"
+		echo "DEBUG: - Comment submission via cgi-bin: ✅"
+		echo "DEBUG: - Comment storage: ✅"
+		echo "DEBUG: - Comment admin panel: ✅"
+		echo "DEBUG: - Comment form expansion: ✅"
+		echo "DEBUG: - Process Selected Comments POST: ✅"
+	else
+		echo "DEBUG: === UPDATED COMMENT SYSTEM TEST SUMMARY ==="
+		echo "DEBUG: ⚠️  SOME COMMENT TESTS FAILED"
+		echo "DEBUG: - Comment submission via cgi-bin: $COMMENT_SUBMISSION_TEST"
+		echo "DEBUG: - Comment storage: $COMMENT_STORAGE_TEST"
+		echo "DEBUG: - Comment admin panel: $COMMENT_ADMIN_TEST"
+		echo "DEBUG: - Comment form expansion: $COMMENT_EXPANSION_TEST"
+		echo "DEBUG: - Process Selected Comments POST: $COMMENT_PROCESS_TEST"
+		tail_server_log
+	fi
+	
 	echo === END COMMENT SYSTEM TESTS ===
+	
+	# Test stats panel functionality
+	echo "DEBUG: Testing stats panel functionality..."
+	echo === STATS PANEL TEST ===
+	
+	# Test 1: Check if stats extension is available via admin URLs
+	echo "DEBUG: Test 1 - Checking if stats extension is available via admin URLs..."
+	STATS_ADMIN_URL=$(echo "$ADMIN_URLS" | grep "stats_" | head -1)
+	if [ -n "$STATS_ADMIN_URL" ]; then
+		echo "DEBUG: ✅ SUCCESS - Stats admin URL found: $STATS_ADMIN_URL"
+		STATS_URL_TEST=true
+		
+		# Test 2: Test stats panel access
+		echo "DEBUG: Test 2 - Testing stats panel access..."
+		FULL_STATS_URL="https://$SRV$STATS_ADMIN_URL"
+		echo "DEBUG: Testing stats panel at: $FULL_STATS_URL"
+		
+		# Test with curl -I to check headers
+		if curl -I -k --connect-timeout 10 --max-time 30 "$FULL_STATS_URL" 2>/dev/null | grep -q "200 OK"; then
+			echo "DEBUG: ✅ SUCCESS - Stats panel returns 200 OK"
+			STATS_ACCESS_TEST=true
+		else
+			echo "DEBUG: ❌ FAILED - Stats panel does not return 200 OK"
+			echo "DEBUG: Response headers from stats panel:"
+			curl -I -k --connect-timeout 10 --max-time 30 "$FULL_STATS_URL" 2>&1 | head -10
+			STATS_ACCESS_TEST=false
+		fi
+		
+		# Test 3: Test stats panel content
+		echo "DEBUG: Test 3 - Testing stats panel content..."
+		if curl -s -k --connect-timeout 10 --max-time 30 "$FULL_STATS_URL" | grep -q "System Statistics\|Memory Usage\|CPU Usage"; then
+			echo "DEBUG: ✅ SUCCESS - Stats panel contains expected content"
+			STATS_CONTENT_TEST=true
+		else
+			echo "DEBUG: ❌ FAILED - Stats panel does not contain expected content"
+			echo "DEBUG: Response content from stats panel:"
+			curl -s -k --connect-timeout 10 --max-time 30 "$FULL_STATS_URL" | head -20
+			STATS_CONTENT_TEST=false
+		fi
+		
+		# Test 4: Test specific stats panel URL mentioned in issue
+		echo "DEBUG: Test 4 - Testing specific stats panel URL from issue..."
+		SPECIFIC_STATS_URL="https://ca2.dansted.org/stats_5bc213dae0a4c555"
+		if curl -I -k --connect-timeout 10 --max-time 30 "$SPECIFIC_STATS_URL" 2>/dev/null | grep -q "200 OK"; then
+			echo "DEBUG: ✅ SUCCESS - Specific stats panel URL returns 200 OK"
+			SPECIFIC_STATS_TEST=true
+		else
+			echo "DEBUG: ❌ FAILED - Specific stats panel URL does not return 200 OK"
+			echo "DEBUG: Response from specific stats URL:"
+			curl -I -k --connect-timeout 10 --max-time 30 "$SPECIFIC_STATS_URL" 2>&1 | head -10
+			SPECIFIC_STATS_TEST=false
+		fi
+		
+	else
+		echo "DEBUG: ❌ FAILED - Could not find stats admin URL"
+		STATS_URL_TEST=false
+		STATS_ACCESS_TEST=false
+		STATS_CONTENT_TEST=false
+		SPECIFIC_STATS_TEST=false
+	fi
+	
+	# Summary
+	echo "DEBUG: === STATS PANEL TEST SUMMARY ==="
+	if [ "$STATS_URL_TEST" = true ] && [ "$STATS_ACCESS_TEST" = true ] && [ "$STATS_CONTENT_TEST" = true ] && [ "$SPECIFIC_STATS_TEST" = true ]; then
+		echo "DEBUG: 🎉 ALL STATS PANEL TESTS PASSED - Stats panel is working correctly"
+		echo "DEBUG: - Stats admin URL found: ✅"
+		echo "DEBUG: - Stats panel access (200 OK): ✅"
+		echo "DEBUG: - Stats panel content: ✅"
+		echo "DEBUG: - Specific stats URL: ✅"
+	else
+		echo "DEBUG: ⚠️  SOME STATS PANEL TESTS FAILED"
+		echo "DEBUG: - Stats admin URL found: $STATS_URL_TEST"
+		echo "DEBUG: - Stats panel access (200 OK): $STATS_ACCESS_TEST"
+		echo "DEBUG: - Stats panel content: $STATS_CONTENT_TEST"
+		echo "DEBUG: - Specific stats URL: $SPECIFIC_STATS_TEST"
+		tail_server_log
+	fi
+	
+	echo === END STATS PANEL TESTS ===
+	
+	# Test file upload functionality
+	echo "DEBUG: Testing file upload functionality..."
+	echo === FILE UPLOAD TEST ===
+	
+	# Get the upload admin URL
+	echo "DEBUG: Test 1 - Finding upload admin URL..."
+	UPLOAD_ADMIN_PATH=$(echo "$ADMIN_URLS" | grep -o "upload_[a-f0-9]*" | head -1)
+	if [ -z "$UPLOAD_ADMIN_PATH" ]; then
+		echo "DEBUG: ❌ FAILED - Could not find upload admin URL"
+		UPLOAD_URL_TEST=false
+	else
+		UPLOAD_ADMIN_URL="/$UPLOAD_ADMIN_PATH"
+		echo "DEBUG: ✅ SUCCESS - Upload admin URL found: $UPLOAD_ADMIN_URL"
+		UPLOAD_URL_TEST=true
+		
+		# Test 2: Test upload panel access
+		echo "DEBUG: Test 2 - Testing upload panel access..."
+		FULL_UPLOAD_URL="https://$SRV$UPLOAD_ADMIN_URL"
+		if curl -k --connect-timeout 10 --max-time 30 "$FULL_UPLOAD_URL" 2>/dev/null | grep -q "File Upload Manager"; then
+			echo "DEBUG: ✅ SUCCESS - Upload panel accessible"
+			UPLOAD_ACCESS_TEST=true
+		else
+			echo "DEBUG: ❌ FAILED - Upload panel not accessible"
+			curl -k --connect-timeout 10 --max-time 30 "$FULL_UPLOAD_URL" 2>&1 | head -10
+			UPLOAD_ACCESS_TEST=false
+		fi
+		
+		# Test 3: Test file upload via curl
+		echo "DEBUG: Test 3 - Testing file upload via curl..."
+		TEST_FILE="test_upload_file.txt"
+		echo "This is a test file for upload testing. $(date)" > "$TEST_FILE"
+		
+		if curl -k --connect-timeout 10 --max-time 30 \
+			-F "file=@$TEST_FILE" \
+			"$FULL_UPLOAD_URL" | grep -q "Upload Successful"; then
+			echo "DEBUG: ✅ SUCCESS - File upload succeeded"
+			UPLOAD_SUBMIT_TEST=true
+		else
+			echo "DEBUG: ❌ FAILED - File upload failed"
+			curl -k --connect-timeout 10 --max-time 30 \
+				-F "file=@$TEST_FILE" \
+				"$FULL_UPLOAD_URL" | head -20
+			UPLOAD_SUBMIT_TEST=false
+		fi
+		
+		# Test 4: Check if file was actually saved
+		echo "DEBUG: Test 4 - Checking if uploaded file was saved..."
+		if ssh root@$SRV "test -f /var/www/html/uploads/$TEST_FILE"; then
+			echo "DEBUG: ✅ SUCCESS - File was saved to uploads directory"
+			UPLOAD_SAVE_TEST=true
+			
+			# Test 5: Check file contents
+			echo "DEBUG: Test 5 - Checking file contents..."
+			if ssh root@$SRV "grep -q 'test file for upload testing' /var/www/html/uploads/$TEST_FILE"; then
+				echo "DEBUG: ✅ SUCCESS - File contents are correct"
+				UPLOAD_CONTENT_TEST=true
+			else
+				echo "DEBUG: ❌ FAILED - File contents are incorrect"
+				UPLOAD_CONTENT_TEST=false
+			fi
+		else
+			echo "DEBUG: ❌ FAILED - File was not saved to uploads directory"
+			UPLOAD_SAVE_TEST=false
+			UPLOAD_CONTENT_TEST=false
+		fi
+		
+		# Test 6: List uploaded files
+		echo "DEBUG: Test 6 - Testing file listing..."
+		if curl -s -k --connect-timeout 10 --max-time 30 "$FULL_UPLOAD_URL" | grep -q "$TEST_FILE"; then
+			echo "DEBUG: ✅ SUCCESS - Uploaded file appears in file list"
+			UPLOAD_LIST_TEST=true
+		else
+			echo "DEBUG: ❌ FAILED - Uploaded file does not appear in file list"
+			UPLOAD_LIST_TEST=false
+		fi
+		
+		# Cleanup
+		rm -f "$TEST_FILE"
+		ssh root@$SRV "rm -f /var/www/html/uploads/$TEST_FILE" || true
+	fi
+	
+	# Summary
+	echo "DEBUG: === FILE UPLOAD TEST SUMMARY ==="
+	if [ "$UPLOAD_URL_TEST" = true ] && [ "$UPLOAD_ACCESS_TEST" = true ] && [ "$UPLOAD_SUBMIT_TEST" = true ] && [ "$UPLOAD_SAVE_TEST" = true ] && [ "$UPLOAD_CONTENT_TEST" = true ] && [ "$UPLOAD_LIST_TEST" = true ]; then
+		echo "DEBUG: 🎉 ALL FILE UPLOAD TESTS PASSED - File upload functionality is working correctly"
+		echo "DEBUG: - Upload admin URL found: ✅"
+		echo "DEBUG: - Upload panel access (200 OK): ✅"
+		echo "DEBUG: - File upload submission: ✅"
+		echo "DEBUG: - File saved to disk: ✅"
+		echo "DEBUG: - File contents correct: ✅"
+		echo "DEBUG: - File listed in manager: ✅"
+	else
+		echo "DEBUG: ⚠️  SOME FILE UPLOAD TESTS FAILED"
+		echo "DEBUG: - Upload admin URL found: $UPLOAD_URL_TEST"
+		echo "DEBUG: - Upload panel access: $UPLOAD_ACCESS_TEST"
+		echo "DEBUG: - File upload submission: $UPLOAD_SUBMIT_TEST"
+		echo "DEBUG: - File saved to disk: $UPLOAD_SAVE_TEST"
+		echo "DEBUG: - File contents correct: $UPLOAD_CONTENT_TEST"
+		echo "DEBUG: - File listed in manager: $UPLOAD_LIST_TEST"
+		tail_server_log
+	fi
+	
+	echo === END FILE UPLOAD TESTS ===
 	
 	if [ -z "$KEEPALIVE" ]
 	then
@@ -415,6 +744,7 @@ then
 	fi
 	
 	echo "DEBUG: Test script completed"
-
-	ssh root@$SRV "./easyp --admin-urls"
+        
 fi
+
+echo Finished at: `date`

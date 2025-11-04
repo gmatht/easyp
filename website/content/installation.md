@@ -3,8 +3,6 @@ title: "Installation"
 description: "How to install and set up easyp HTTPS server"
 ---
 
-# Installation
-
 ## Quick Start
 
 1. Clone or download this project

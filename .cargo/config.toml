@@ -1,3 +1,32 @@
 [alias]
 
 fmt-unstable = ["fmt", "--all", "--", "--config-path", ".rustfmt.unstable.toml"]
+
+# Cross-compilation configuration using Zig
+# See: https://actually.fyi/posts/zig-makes-rust-cross-compilation-just-work/
+#
+# Example usage:
+#   For aarch64-apple-darwin: cargo build --target aarch64-apple-darwin
+#
+# Before building, set the TARGET environment variable:
+#   set TARGET=aarch64-apple-darwin
+#   set CC=%cd%\zig-cc.bat
+#   cargo build --target aarch64-apple-darwin
+#
+# Uncomment and modify the section below for your specific target:
+
+# Example: Cross-compile to aarch64-apple-darwin (Apple Silicon macOS)
+# Uncomment the section below to enable cross-compilation:
+# Cross-compilation for aarch64-apple-darwin with MSVC flag translation
+[target.aarch64-apple-darwin]
+linker = "zig-cc-aarch64-apple-darwin.bat"
+
+# Force cc-rs to use GNU-style flags instead of MSVC
+[env]
+CARGO_TARGET_AARCH64_APPLE_DARWIN_UNKNOWN_VENDOR = "gnu"
+
+# To add more targets:
+# 1. Create a wrapper .bat file: zig-cc-TARGET_NAME.bat
+# 2. Update the path to zig.exe in that file
+# 3. Uncomment and modify the section above for your target
+# 4. Then build with: cargo build --target YOUR-TARGET

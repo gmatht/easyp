@@ -3,8 +3,6 @@ title: "Development"
 description: "Development information and project structure for easyp"
 ---
 
-# Development
-
 ## Project Structure
 
 ```

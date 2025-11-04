@@ -3,8 +3,6 @@ title: "Troubleshooting"
 description: "Common issues and solutions for easyp HTTPS server"
 ---
 
-# Troubleshooting
-
 ## Common Issues
 
 ### 1. Permission Denied on Port 443

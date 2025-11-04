@@ -113,6 +113,25 @@ rustls-pemfile = { version = "2.2" }
 codegen-units = 1
 lto = true
 
+# Optimize ring-related packages to -O2 level
+[profile.dev.package.ring]
+opt-level = 2
+
+[profile.dev.package.ring-wrapper]
+opt-level = 2
+
+[profile.dev.package.ring-redox]
+opt-level = 2
+
+[profile.release.package.ring]
+opt-level = 2
+
+[profile.release.package.ring-wrapper]
+opt-level = 2
+
+[profile.release.package.ring-redox]
+opt-level = 2
+
 
 
 # ensure all our tests are against the local copy, never
@@ -122,7 +141,7 @@ rustls = { path = "rustls" }
 #rcgen = { path = "rcgen/rcgen", version = "0.14.5" }
 minreq = { path = "minreq" }
 
-[profile.lto]
+[profile.release]
 opt-level = "z"
 strip = true
 lto = "fat"
@@ -130,6 +149,4 @@ incremental = false
 overflow-checks = true
 debug = false
 codegen-units = 1
-inherits = "release"
-
-
+panic = 'abort'

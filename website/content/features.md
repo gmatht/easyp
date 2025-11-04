@@ -3,8 +3,6 @@ title: "Features"
 description: "Comprehensive list of easyp HTTPS server features"
 ---
 
-# Features
-
 easyp is a modern HTTPS server with automatic certificate management and extension support.
 
 ## Core Features

@@ -3,8 +3,6 @@ title: "Configuration"
 description: "Configuration options and environment variables for easyp"
 ---
 
-# Configuration
-
 ## ACME Configuration
 
 The server supports two modes of operation:

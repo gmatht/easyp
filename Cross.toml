@@ -1,4 +1,12 @@
 [target.x86_64-unknown-linux-gnu]
-#image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu:main-centos"
-#image = "ghcr.io/cross-rs/x86_64-unknown-linux-gnu:main-centos"
+# Use CentOS 7 base image for glibc 2.17 compatibility
 image = "ghcr.io/cross-rs/x86_64-unknown-linux-gnu:main-centos"
+
+[target.aarch64-unknown-linux-gnu]
+# Use CentOS 7 base image for glibc 2.17 compatibility
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu:main-centos"
+[target.aarch64-unknown-linux-gnu.env]
+# Define __ARM_ARCH for ring assembly code on older GCC versions
+# See: https://github.com/briansmith/ring/issues/1748
+CFLAGS = "-D__ARM_ARCH=8"
+ASFLAGS = "-D__ARM_ARCH=8"
