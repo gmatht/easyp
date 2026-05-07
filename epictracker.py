@@ -393,6 +393,183 @@ def cmd_aggregates(args):
                 print(f"    {t}: {cnt}")
 
 
+def cmd_verify(args):
+    """Scan and optionally apply safe fixes.
+
+    Fixes applied with --apply:
+    - ON_COOLDOWN -> READY_TO_RUN if cooldown expired
+    - account membership duplicates resolved (keeps first occurrence)
+    - accounts truncated to 3 characters if longer (keeps first 3)
+    - invalid choices (mid_choice/final_choice not allowed) cleared and status set to PLEASE_SELECT
+    """
+    arcs = load_arcs()
+    chars = discover_characters()
+    accounts = load_accounts()
+    now = datetime.datetime.now(datetime.timezone.utc)
+    changes_made = False
+
+    # check accounts for duplicates and size
+    char_to_accounts = defaultdict(list)
+    for acc_name, acc in accounts.items():
+        for c in acc.characters:
+            char_to_accounts[c].append(acc_name)
+
+    # fix duplicates if apply
+    for c, acc_list in char_to_accounts.items():
+        if len(acc_list) > 1:
+            print(f"Character {c} in multiple accounts: {acc_list}")
+            if args.apply:
+                # keep in first account, remove from others
+                first = acc_list[0]
+                for other in acc_list[1:]:
+                    acc = accounts.get(other)
+                    if acc and c in acc.characters:
+                        acc.characters.remove(c)
+                        path = os.path.join(ACCOUNTS_DIR, f"{other}.txt")
+                        write_account(path, acc)
+                        print(f"  removed {c} from account {other}")
+                        changes_made = True
+
+    # enforce account size
+    for acc_name, acc in accounts.items():
+        if len(acc.characters) > 3:
+            print(f"Account {acc_name} has {len(acc.characters)} characters (max 3)")
+            if args.apply:
+                acc.characters = acc.characters[:3]
+                write_account(os.path.join(ACCOUNTS_DIR, f"{acc_name}.txt"), acc)
+                print(f"  truncated account {acc_name} to first 3 characters")
+                changes_made = True
+
+    # per-character files validation
+    for key, path in chars.items():
+        rows = load_character_file(path)
+        modified = False
+        for r in rows:
+            arc = arcs.get(r.arc_key)
+            if r.status == 'ON_COOLDOWN' and r.last_delivered_iso:
+                dt = parse_iso(r.last_delivered_iso)
+                if dt and arc:
+                    until = dt + datetime.timedelta(days=arc.cooldown_days)
+                    if until <= now:
+                        print(f"{key} {r.arc_key}: cooldown expired (was ON_COOLDOWN)")
+                        if args.apply:
+                            r.status = 'READY_TO_RUN'
+                            modified = True
+                            changes_made = True
+            # validate choices
+            if arc:
+                if r.mid_choice and r.mid_choice not in arc.allowed:
+                    print(f"{key} {r.arc_key}: invalid mid_choice '{r.mid_choice}' for arc allowed={arc.allowed}")
+                    if args.apply:
+                        r.mid_choice = ''
+                        r.status = 'PLEASE_SELECT'
+                        modified = True
+                        changes_made = True
+                if r.final_choice and r.final_choice not in arc.allowed:
+                    print(f"{key} {r.arc_key}: invalid final_choice '{r.final_choice}' for arc allowed={arc.allowed}")
+                    if args.apply:
+                        r.final_choice = ''
+                        r.status = 'PLEASE_SELECT'
+                        modified = True
+                        changes_made = True
+            else:
+                print(f"{key} {r.arc_key}: arc key not found in epic_arcs.txt")
+                # don't auto-remove
+        if modified:
+            save_character_file(path, rows)
+
+    if args.apply and not changes_made:
+        print("verify: no changes needed")
+    elif not args.apply:
+        print("verify: run with --apply to apply safe fixes")
+
+
+def cmd_export_csv(args):
+    outpath = args.output or '-'
+    chars = discover_characters()
+    fieldnames = ['player', 'character', 'arc_key', 'status', 'mid_choice', 'final_choice', 'last_delivered_iso', 'notes']
+    rows_out = []
+    for key, path in chars.items():
+        player, character = key.split('/', 1)
+        for r in load_character_file(path):
+            rows_out.append({
+                'player': player,
+                'character': character,
+                'arc_key': r.arc_key,
+                'status': r.status,
+                'mid_choice': r.mid_choice,
+                'final_choice': r.final_choice,
+                'last_delivered_iso': r.last_delivered_iso,
+                'notes': r.notes,
+            })
+    if outpath == '-' or outpath == '/dev/stdout':
+        writer = csv.DictWriter(sys.stdout, fieldnames=fieldnames)
+        writer.writeheader()
+        for r in rows_out:
+            writer.writerow(r)
+    else:
+        with open(outpath, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for r in rows_out:
+                writer.writerow(r)
+        print(f"wrote {len(rows_out)} rows to {outpath}")
+
+
+def cmd_import_csv(args):
+    path = args.input
+    if not os.path.exists(path):
+        print(f"input file not found: {path}")
+        return
+    arcs = load_arcs()
+    updated_characters = defaultdict(list)
+    with open(path, newline='', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            player = row.get('player')
+            character = row.get('character')
+            arc_key = row.get('arc_key')
+            status = row.get('status') or 'PLEASE_SELECT'
+            mid = (row.get('mid_choice') or '').strip()
+            final = (row.get('final_choice') or '').strip()
+            last = (row.get('last_delivered_iso') or '').strip()
+            notes = row.get('notes') or ''
+            if not player or not character or not arc_key:
+                print(f"skipping invalid row (missing player/character/arc_key): {row}")
+                continue
+            arc = arcs.get(arc_key)
+            if arc is None:
+                print(f"warning: arc {arc_key} not known; skipping row")
+                continue
+            if mid and mid not in arc.allowed:
+                print(f"warning: mid_choice {mid} not allowed for {arc_key}; clearing mid_choice")
+                mid = ''
+            if final and final not in arc.allowed:
+                print(f"warning: final_choice {final} not allowed for {arc_key}; clearing final_choice")
+                final = ''
+            key = f"{player}/{character}"
+            updated_characters[key].append(CharacterArcRow(arc_key, status, mid, final, last, notes))
+
+    # apply updates
+    for key, rows in updated_characters.items():
+        player, character = key.split('/', 1)
+        pdir = os.path.join(PLAYERS_DIR, player)
+        os.makedirs(pdir, exist_ok=True)
+        path = os.path.join(pdir, f"{character}.txt")
+        existing = load_character_file(path)
+        # merge by arc_key
+        existing_map = {r.arc_key: r for r in existing}
+        for r in rows:
+            existing_map[r.arc_key] = r
+        merged = list(existing_map.values())
+        if args.apply:
+            save_character_file(path, merged)
+            print(f"wrote {len(merged)} rows to {path}")
+        else:
+            print(f"would write {len(merged)} rows to {path} (use --apply to make changes)")
+
+
+
 def build_parser():
     p = argparse.ArgumentParser(description="Epic Arc Tracker CLI")
     sub = p.add_subparsers(dest='cmd')
