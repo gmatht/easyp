@@ -5,8 +5,14 @@ This is intentionally tiny and uses the same data files as the CLI.
 """
 from flask import Flask, jsonify, request, abort
 import os
+import sys
 from pathlib import Path
+# ensure repo root is on path so we can import epictracker
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
 import epictracker as et
+from flask import send_from_directory
 
 app = Flask(__name__)
 
@@ -15,6 +21,18 @@ app = Flask(__name__)
 def api_arcs():
     arcs = et.load_arcs()
     return jsonify({k: {'name': v.name, 'allowed': v.allowed, 'cooldown_days': v.cooldown_days} for k, v in arcs.items()})
+
+
+@app.get('/')
+def index():
+    static_dir = os.path.join(os.path.dirname(__file__), 'static')
+    return send_from_directory(static_dir, 'index.html')
+
+
+@app.get('/static/<path:path>')
+def static_files(path):
+    static_dir = os.path.join(os.path.dirname(__file__), 'static')
+    return send_from_directory(static_dir, path)
 
 
 @app.get('/api/players')
