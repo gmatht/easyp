@@ -602,6 +602,16 @@ def build_parser():
     sa.add_argument('--notes', default='')
 
     ag = sub.add_parser('aggregates')
+    
+    v = sub.add_parser('verify')
+    v.add_argument('--apply', action='store_true', help='apply safe fixes')
+
+    ex = sub.add_parser('export-csv')
+    ex.add_argument('--output', default='-', help='output path or - for stdout')
+
+    im = sub.add_parser('import-csv')
+    im.add_argument('input', help='input CSV path')
+    im.add_argument('--apply', action='store_true', help='apply changes')
 
     return p
 
@@ -626,6 +636,12 @@ def main(argv=None):
         cmd_set_account(args)
     elif args.cmd == 'aggregates':
         cmd_aggregates(args)
+    elif args.cmd == 'verify':
+        cmd_verify(args)
+    elif args.cmd == 'export-csv':
+        cmd_export_csv(args)
+    elif args.cmd == 'import-csv':
+        cmd_import_csv(args)
     else:
         print("unknown command", args.cmd)
         return 2
