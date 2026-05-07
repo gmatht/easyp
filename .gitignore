@@ -17,3 +17,4 @@ Thumbs.db
 
 # Data directory is tracked but keep any local backups out
 data/*~
+data/secret_tokens.txt

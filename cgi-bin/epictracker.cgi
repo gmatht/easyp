@@ -63,6 +63,15 @@ def read_json_body():
 
 
 def handle_get(parts):
+    # simple secret-token auth for mutating operations: token may be provided via ?token=XYZ
+    # For GET endpoints that return sensitive info we don't require token, but POST endpoints check it.
+    q = os.environ.get('QUERY_STRING','')
+    token = None
+    if q:
+        for kv in q.split('&'):
+            if kv.startswith('token='):
+                token = kv.split('=',1)[1]
+                break
     if len(parts) == 0 or parts == ['']:
         return send_json({'message': 'Epic Arc Tracker CGI'})
     if parts[0] == 'arcs':
@@ -120,6 +129,28 @@ def handle_get(parts):
 
 
 def handle_post(parts):
+    # require token for POST actions
+    q = os.environ.get('QUERY_STRING','')
+    token = None
+    if q:
+        for kv in q.split('&'):
+            if kv.startswith('token='):
+                token = kv.split('=',1)[1]
+                break
+    # load allowed tokens
+    tokens_path = os.path.join(ROOT, 'data', 'secret_tokens.txt')
+    valid_tokens = set()
+    if os.path.exists(tokens_path):
+        with open(tokens_path, 'r', encoding='utf-8') as f:
+            for raw in f:
+                line = raw.strip()
+                if not line or line.startswith('#'):
+                    continue
+                parts_t = [p.strip() for p in line.split('|')]
+                if parts_t:
+                    valid_tokens.add(parts_t[0])
+    if token is None or token not in valid_tokens:
+        return send_error('invalid or missing token', 401)
     if parts[0] == 'character' and len(parts) >= 4:
         player = parts[1]
         character = parts[2]
