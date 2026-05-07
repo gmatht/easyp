@@ -1,0 +1,5 @@
+# arc_key|status|mid_choice|final_choice|last_delivered_iso|notes
+fractured_legacy|READY_TO_RUN|||
+blood_stained_stars|READY_TO_CHOOSE|amarr|||
+right_to_rule|READY_TO_RUN|||
+syndication|LACK_STANDINGS|||

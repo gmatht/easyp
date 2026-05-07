@@ -1,0 +1,9 @@
+# key|display_name|allowed_factions(semi-colon tokens)|cooldown_days|notes
+fractured_legacy|Fractured Legacy|ore|90|ORE epic arc
+blood_stained_stars|The Blood-Stained Stars|amarr;caldari;gallente;minmatar|90|Sisters of EVE arc - final empire choice
+angel_sound|Angel Sound|angel_cartel|90|
+smash_and_grab|Smash and Grab|guristas|90|
+right_to_rule|Right to Rule|amarr;sansha|90|Amarr or Sansha final choice
+penumbra|Penumbra|caldari|90|
+syndication|Syndication|gallente;syndicate|90|Gallente or The Syndicate final choice
+wildfire|Wildfire|minmatar|90|
