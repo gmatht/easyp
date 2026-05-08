@@ -351,6 +351,42 @@ def cmd_set_account(args):
     print(f"wrote account {name}")
 
 
+def cmd_add_player(args):
+    player = args.player
+    pdir = os.path.join(PLAYERS_DIR, player)
+    if os.path.exists(pdir):
+        print(f"player dir already exists: {pdir}")
+        return
+    os.makedirs(pdir, exist_ok=True)
+    print(f"created player dir: {pdir}")
+
+
+def cmd_add_character(args):
+    player = args.player
+    char = args.character
+    seed = args.seed
+    force = args.force
+    pdir = os.path.join(PLAYERS_DIR, player)
+    if not os.path.isdir(pdir):
+        print(f"player not found, creating: {pdir}")
+        os.makedirs(pdir, exist_ok=True)
+    path = os.path.join(pdir, f"{char}.txt")
+    if os.path.exists(path) and not force:
+        print(f"character file exists: {path} (use --force to overwrite)")
+        return
+    arcs = load_arcs()
+    rows = []
+    if seed == 'please':
+        for k in sorted(arcs.keys()):
+            rows.append(CharacterArcRow(k, 'PLEASE_SELECT', '', '', '', ''))
+    elif seed == 'ready':
+        for k in sorted(arcs.keys()):
+            rows.append(CharacterArcRow(k, 'READY_TO_RUN', '', '', '', ''))
+    # write file
+    save_character_file(path, rows)
+    print(f"wrote character file: {path} with {len(rows)} arcs (seed={seed})")
+
+
 def cmd_aggregates(args):
     arcs = load_arcs()
     chars = discover_characters()
@@ -602,7 +638,7 @@ def build_parser():
     sa.add_argument('--notes', default='')
 
     ag = sub.add_parser('aggregates')
-    
+
     v = sub.add_parser('verify')
     v.add_argument('--apply', action='store_true', help='apply safe fixes')
 
@@ -612,6 +648,15 @@ def build_parser():
     im = sub.add_parser('import-csv')
     im.add_argument('input', help='input CSV path')
     im.add_argument('--apply', action='store_true', help='apply changes')
+
+    ap = sub.add_parser('add-player')
+    ap.add_argument('player')
+
+    ac = sub.add_parser('add-character')
+    ac.add_argument('player')
+    ac.add_argument('character')
+    ac.add_argument('--seed', choices=['none', 'please', 'ready'], default='none', help="seed arc rows: 'please' -> PLEASE_SELECT, 'ready' -> READY_TO_RUN")
+    ac.add_argument('--force', action='store_true', help='overwrite existing character file')
 
     return p
 
@@ -642,6 +687,10 @@ def main(argv=None):
         cmd_export_csv(args)
     elif args.cmd == 'import-csv':
         cmd_import_csv(args)
+    elif args.cmd == 'add-player':
+        cmd_add_player(args)
+    elif args.cmd == 'add-character':
+        cmd_add_character(args)
     else:
         print("unknown command", args.cmd)
         return 2
