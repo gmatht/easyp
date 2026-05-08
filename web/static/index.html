@@ -73,6 +73,12 @@
   <label>Response</label>
   <pre id="response">(no response yet)</pre>
 
+  <label>New Player Token (auto-copied)</label>
+  <div class="row">
+    <input id="playerToken" readonly class="col" />
+    <button id="btnCopyPlayerToken" class="small">Copy Token</button>
+  </div>
+
   <script>
     const basePathEl = document.getElementById('basePath')
     const useApi = document.getElementById('useApi')
@@ -226,9 +232,27 @@
       const token = tokenEl.value.trim()
       if(!token) return alert('secret token required in UI to create player')
       try{
-        const r = await fetch((basePathEl.value||'/cgi-bin/epictracker.cgi') + '/player/add?token=' + encodeURIComponent(token), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({player: player})})
+        const url = (basePathEl.value||'/cgi-bin/epictracker.cgi') + '/player/add?token=' + encodeURIComponent(token)
+        const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({player: player})})
         const json = await r.json()
-        alert('Create player: ' + JSON.stringify(json))
+        if(!r.ok){
+          alert('Create player failed: ' + JSON.stringify(json))
+          return
+        }
+        // show and auto-copy token if provided
+        const ptoken = json.token
+        if(ptoken){
+          const tokenElOut = document.getElementById('playerToken')
+          tokenElOut.value = ptoken
+          try{
+            await navigator.clipboard.writeText(ptoken)
+            alert('Player created. Token copied to clipboard.')
+          }catch(e){
+            alert('Player created. Token: ' + ptoken + ' (copy failed)')
+          }
+        } else {
+          alert('Player created: ' + JSON.stringify(json))
+        }
         loadData()
       }catch(e){ alert('error: '+e) }
     })
@@ -244,7 +268,11 @@
       try{
         const r = await fetch((basePathEl.value||'/cgi-bin/epictracker.cgi') + '/character/add?token=' + encodeURIComponent(token), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({player: player, character: character, seed: seed})})
         const json = await r.json()
-        alert('Create character: ' + JSON.stringify(json))
+        if(!r.ok){
+          alert('Create character failed: ' + JSON.stringify(json))
+        }else{
+          alert('Create character: ' + JSON.stringify(json))
+        }
         loadData()
       }catch(e){ alert('error: '+e) }
     })
