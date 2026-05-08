@@ -60,6 +60,8 @@
     <button id="btnCopy">Copy URL</button>
     <button id="btnCurl">Show cURL</button>
     <button id="btnDo">Perform Action</button>
+    <button id="btnAddPlayer">Add Player</button>
+    <button id="btnAddChar">Add Character</button>
   </div>
 
   <label>Generated URL</label>
@@ -216,6 +218,35 @@
       }catch(e){
         respEl.textContent = 'error: '+e
       }
+    })
+
+    document.getElementById('btnAddPlayer').addEventListener('click', async ()=>{
+      const player = prompt('Player name (A-Za-z0-9_- max 64)')
+      if(!player) return
+      const token = tokenEl.value.trim()
+      if(!token) return alert('secret token required in UI to create player')
+      try{
+        const r = await fetch((basePathEl.value||'/cgi-bin/epictracker.cgi') + '/player/add?token=' + encodeURIComponent(token), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({player: player})})
+        const json = await r.json()
+        alert('Create player: ' + JSON.stringify(json))
+        loadData()
+      }catch(e){ alert('error: '+e) }
+    })
+
+    document.getElementById('btnAddChar').addEventListener('click', async ()=>{
+      const player = prompt('Player name (existing)')
+      if(!player) return
+      const character = prompt('Character name')
+      if(!character) return
+      const seed = prompt("seed (none/please/ready)", 'none') || 'none'
+      const token = tokenEl.value.trim()
+      if(!token) return alert('secret token required in UI to create character')
+      try{
+        const r = await fetch((basePathEl.value||'/cgi-bin/epictracker.cgi') + '/character/add?token=' + encodeURIComponent(token), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({player: player, character: character, seed: seed})})
+        const json = await r.json()
+        alert('Create character: ' + JSON.stringify(json))
+        loadData()
+      }catch(e){ alert('error: '+e) }
     })
 
     // toggle useApi behaviour

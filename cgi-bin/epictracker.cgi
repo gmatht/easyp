@@ -25,6 +25,37 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 import epictracker as et
+import re
+import secrets
+
+
+NAME_RE = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
+
+
+def normalize_and_validate_name(raw: str):
+    if raw is None:
+        return None
+    name = raw.strip().replace(' ', '_')
+    if not name:
+        return None
+    if not NAME_RE.match(name):
+        return None
+    return name
+
+
+def append_token(token: str, purpose: str, created_by: str):
+    # append token to data/secret_tokens.txt (ignored by git)
+    path = os.path.join(ROOT, 'data', 'secret_tokens.txt')
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    line = f"{token}|{purpose}|{created_by}\n"
+    with open(path, 'a', encoding='utf-8') as f:
+        f.write(line)
+
+
+def generate_player_token(player: str, created_by: str) -> str:
+    token = secrets.token_urlsafe(18)
+    append_token(token, f"player:{player}", created_by)
+    return token
 
 
 RESPONSES = {
@@ -151,6 +182,53 @@ def handle_post(parts):
                     valid_tokens.add(parts_t[0])
     if token is None or token not in valid_tokens:
         return send_error('invalid or missing token', 401)
+    # identify creator token string for token metadata
+    created_by = token
+    # now handle player/character create before other actions
+    if parts[0] == 'player' and len(parts) >= 2 and parts[1] == 'add':
+        body = read_json_body()
+        if body is None:
+            return send_error('invalid JSON body', 400)
+        raw_player = body.get('player')
+        player = normalize_and_validate_name(raw_player)
+        if not player:
+            return send_error('invalid player name; use only A-Z a-z 0-9 _ - and 1-64 chars', 400)
+        pdir = os.path.join(et.PLAYERS_DIR, player)
+        if not os.path.isdir(pdir):
+            os.makedirs(pdir, exist_ok=True)
+        # generate token for this player and return it
+        ptoken = generate_player_token(player, created_by)
+        return send_json({'ok': True, 'player': player, 'token': ptoken})
+
+    if parts[0] == 'character' and len(parts) >= 2 and parts[1] == 'add':
+        body = read_json_body()
+        if body is None:
+            return send_error('invalid JSON body', 400)
+        raw_player = body.get('player')
+        raw_character = body.get('character')
+        seed = body.get('seed') or 'none'
+        force = bool(body.get('force'))
+        player = normalize_and_validate_name(raw_player)
+        character = normalize_and_validate_name(raw_character)
+        if not player or not character:
+            return send_error('invalid player or character name; use only A-Z a-z 0-9 _ - and 1-64 chars', 400)
+        pdir = os.path.join(et.PLAYERS_DIR, player)
+        os.makedirs(pdir, exist_ok=True)
+        path = os.path.join(pdir, f"{character}.txt")
+        if os.path.exists(path) and not force:
+            return send_error('character file exists (use force to overwrite)', 400)
+        # seed rows
+        arcs = et.load_arcs()
+        rows = []
+        if seed == 'please':
+            for k in sorted(arcs.keys()):
+                rows.append(et.CharacterArcRow(k, 'PLEASE_SELECT', '', '', '', ''))
+        elif seed == 'ready':
+            for k in sorted(arcs.keys()):
+                rows.append(et.CharacterArcRow(k, 'READY_TO_RUN', '', '', '', ''))
+        # write file
+        et.save_character_file(path, rows)
+        return send_json({'ok': True, 'player': player, 'character': character, 'seed': seed})
     if parts[0] == 'character' and len(parts) >= 4:
         player = parts[1]
         character = parts[2]
