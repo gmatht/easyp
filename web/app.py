@@ -7,6 +7,8 @@ from flask import Flask, jsonify, request, abort
 import os
 import sys
 from pathlib import Path
+import secrets
+import re
 # ensure repo root is on path so we can import epictracker
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if ROOT not in sys.path:
@@ -15,6 +17,52 @@ import epictracker as et
 from flask import send_from_directory
 
 app = Flask(__name__)
+
+# simple name validator
+NAME_RE = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
+
+
+def normalize_and_validate_name(raw: str):
+    if raw is None:
+        return None
+    name = str(raw).strip().replace(' ', '_')
+    if not name:
+        return None
+    if not NAME_RE.match(name):
+        return None
+    return name
+
+
+def tokens_path():
+    return os.path.join(ROOT, 'data', 'secret_tokens.txt')
+
+
+def load_valid_tokens():
+    path = tokens_path()
+    tokens = set()
+    if os.path.exists(path):
+        with open(path, 'r', encoding='utf-8') as f:
+            for raw in f:
+                line = raw.strip()
+                if not line or line.startswith('#'):
+                    continue
+                parts = [p.strip() for p in line.split('|')]
+                if parts:
+                    tokens.add(parts[0])
+    return tokens
+
+
+def append_token(token: str, purpose: str, created_by: str):
+    path = tokens_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'a', encoding='utf-8') as f:
+        f.write(f"{token}|{purpose}|{created_by}\n")
+
+
+def generate_player_token(player: str, created_by: str) -> str:
+    token = secrets.token_urlsafe(18)
+    append_token(token, f"player:{player}", created_by)
+    return token
 
 
 @app.get('/api/arcs')
@@ -43,6 +91,55 @@ def api_players():
         player, character = key.split('/', 1)
         players.setdefault(player, []).append(character)
     return jsonify(players)
+
+
+@app.post('/api/player/add')
+def api_add_player():
+    data = request.json or {}
+    raw_player = data.get('player')
+    admin_token = request.args.get('token')
+    valid = load_valid_tokens()
+    if not admin_token or admin_token not in valid:
+        return jsonify({'error': 'invalid or missing admin token'}), 401
+    player = normalize_and_validate_name(raw_player)
+    if not player:
+        return jsonify({'error': 'invalid player name; use A-Za-z0-9_- (1-64)'}), 400
+    pdir = os.path.join(et.PLAYERS_DIR, player)
+    os.makedirs(pdir, exist_ok=True)
+    ptoken = generate_player_token(player, admin_token)
+    return jsonify({'ok': True, 'player': player, 'token': ptoken})
+
+
+@app.post('/api/character/add')
+def api_add_character():
+    data = request.json or {}
+    raw_player = data.get('player')
+    raw_character = data.get('character')
+    seed = data.get('seed') or 'none'
+    force = bool(data.get('force'))
+    admin_token = request.args.get('token')
+    valid = load_valid_tokens()
+    if not admin_token or admin_token not in valid:
+        return jsonify({'error': 'invalid or missing admin token'}), 401
+    player = normalize_and_validate_name(raw_player)
+    character = normalize_and_validate_name(raw_character)
+    if not player or not character:
+        return jsonify({'error': 'invalid player or character name'}), 400
+    pdir = os.path.join(et.PLAYERS_DIR, player)
+    os.makedirs(pdir, exist_ok=True)
+    path = os.path.join(pdir, f"{character}.txt")
+    if os.path.exists(path) and not force:
+        return jsonify({'error': 'character file exists (use force to overwrite)'}), 400
+    arcs = et.load_arcs()
+    rows = []
+    if seed == 'please':
+        for k in sorted(arcs.keys()):
+            rows.append(et.CharacterArcRow(k, 'PLEASE_SELECT', '', '', '', ''))
+    elif seed == 'ready':
+        for k in sorted(arcs.keys()):
+            rows.append(et.CharacterArcRow(k, 'READY_TO_RUN', '', '', '', ''))
+    et.save_character_file(path, rows)
+    return jsonify({'ok': True, 'player': player, 'character': character, 'seed': seed})
 
 
 @app.get('/api/character/<player>/<character>')
