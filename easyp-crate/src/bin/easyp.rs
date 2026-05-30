@@ -14,6 +14,9 @@ use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::process::Command as TokioCommand;
+use tokio::time::{timeout as tokio_timeout, Duration as TokioDuration};
+use std::process::Command as StdCommand;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls::ServerConfig as TokioServerConfig;
 use std::path::PathBuf;
@@ -70,6 +73,8 @@ use rustls_acme::{AcmeConfig, ChallengeType};
 mod cgi_env;
 #[path = "../modules/secure_file_server_module.rs"]
 mod secure_file_server_module;
+#[path = "../modules/cgi_handler.rs"]
+mod cgi_handler;
 use secure_file_server_module::{SecureFileServer, SecurityConfig};
 
 #[path = "../modules/file_handler.rs"]
@@ -1256,7 +1261,26 @@ impl OnDemandHttpsServer {
             // Handle bin extension request
             let response = {
                 let registry = extension_registry.lock().unwrap();
-                registry.handle_bin_request(bin_path, "GET", query_string, &headers)
+                // First, try internal bin handlers (compiled extensions)
+                match registry.handle_bin_request(bin_path, "GET", query_string, &headers) {
+                    Ok(resp) => Ok(resp),
+                    Err(_) => {
+                        // If internal handler not found, try external CGI script under document_root/cgi-bin
+                        let document_root = secure_file_server.config().document_root.clone();
+                        let mut script_path = document_root.join("cgi-bin");
+                        // Trim leading slash
+                        let clean = bin_path.trim_start_matches('/');
+                        script_path = script_path.join(clean.trim_start_matches("cgi-bin/"));
+
+                        // Synchronously call into async CGI executor
+                        match tokio::runtime::Handle::current().block_on(async {
+                            crate::modules::cgi_handler::execute_cgi_script(&script_path, &crate::cgi_env::CgiEnv::from_request("GET", bin_path, "localhost", query_string, &headers), None, 5).await
+                        }) {
+                            Ok(bytes) => Ok(String::from_utf8_lossy(&bytes).to_string()),
+                            Err(e) => Err(e),
+                        }
+                    }
+                }
             };
 
             match response {

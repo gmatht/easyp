@@ -10,16 +10,67 @@ if [ $# -ne 1 ]; then
 fi
 
 TARGET_HOST="$1"
+
 BINARY_NAME="easyp"
 SERVICE_NAME="easyp"
 
-#echo "Building EasyP binary..."
-#cargo build --release
-#cross build --profile lto --target x86_64-unknown-linux-gnu
+# Locate existing binary in common target locations or attempt to build it.
+# The project sometimes uses a custom `lto` profile which places the binary in
+# target/<triple>/lto/. Fall back to target/release/ if that doesn't exist.
 
-if [ $? -ne 0 ]; then
-    echo "Build failed!"
-    exit 1
+# Candidate paths to check (in order of preference)
+possible_paths=(
+    "target/x86_64-unknown-linux-gnu/lto/$BINARY_NAME"
+    "easyp-crate/target/x86_64-unknown-linux-gnu/lto/$BINARY_NAME"
+    "target/lto/$BINARY_NAME"
+    "easyp-crate/target/lto/$BINARY_NAME"
+    "target/release/$BINARY_NAME"
+    "easyp-crate/target/release/$BINARY_NAME"
+    "target/$BINARY_NAME"
+    "easyp-crate/target/$BINARY_NAME"
+)
+
+LOCAL_BINARY=""
+for p in "${possible_paths[@]}"; do
+    if [ -f "$p" ]; then
+        LOCAL_BINARY="$p"
+        break
+    fi
+done
+
+if [ -z "$LOCAL_BINARY" ]; then
+    echo "Binary not found in target directories. Attempting to build (this may take a while)..."
+
+    # Prefer `cross` for reproducible targets if available, otherwise use cargo.
+    if command -v cross >/dev/null 2>&1; then
+        echo "Building with: cross build --profile lto --target x86_64-unknown-linux-gnu"
+        if ! cross build --profile lto --target x86_64-unknown-linux-gnu; then
+            echo "cross build failed, falling back to cargo build --release"
+            if ! cargo build --release; then
+                echo "cargo build --release failed!"
+                exit 1
+            fi
+        fi
+    else
+        echo "Building with: cargo build --release"
+        if ! cargo build --release; then
+            echo "cargo build failed!"
+            exit 1
+        fi
+    fi
+
+    # re-check for the binary after build
+    for p in "${possible_paths[@]}"; do
+        if [ -f "$p" ]; then
+            LOCAL_BINARY="$p"
+            break
+        fi
+    done
+
+    if [ -z "$LOCAL_BINARY" ]; then
+        echo "Build completed but binary not found. Please build a portable binary or adjust the script to point to the correct path."
+        exit 1
+    fi
 fi
 
 if [ "$(basename `pwd`)" = easyp-crate ]; then
@@ -28,8 +79,8 @@ fi
 
 
 
-echo "Copying binary to $TARGET_HOST:/usr/local/bin/..."
-scp target/x86_64-unknown-linux-gnu/lto/$BINARY_NAME $TARGET_HOST:/tmp/$BINARY_NAME
+echo "Copying binary ($LOCAL_BINARY) to $TARGET_HOST:/usr/local/bin/..."
+scp "$LOCAL_BINARY" "$TARGET_HOST:/tmp/$BINARY_NAME"
 
 if [ $? -ne 0 ]; then
     echo "Failed to copy binary!"
