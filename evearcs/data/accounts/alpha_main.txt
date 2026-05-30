@@ -1,0 +1,2 @@
+# account_name|type|characters(semi-colon list of player/character)|notes
+alpha_main|Alpha|sample_player/SampleChar|Example alpha account with one character
