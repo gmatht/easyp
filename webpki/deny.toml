@@ -1,0 +1,30 @@
+[advisories]
+yanked = "deny"
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "ISC",
+    "LicenseRef-webpki",
+    "MIT",
+    "OpenSSL",
+    "Unicode-3.0",
+]
+confidence-threshold = 1.0
+
+# XXX: Figure out how to deal with the Google-source test data
+# https://github.com/briansmith/webpki/issues/148.
+[[licenses.clarify]]
+name = "rustls-webpki"
+expression = "LicenseRef-webpki"
+license-files = [
+    { path = "LICENSE", hash = 0x001c7e6c },
+]
+
+[bans]
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
