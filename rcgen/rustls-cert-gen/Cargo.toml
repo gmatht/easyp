@@ -1,0 +1,32 @@
+[package]
+name = "rustls-cert-gen"
+version = "0.2.1"
+description = "Rust X.509 certificate generator CLI"
+documentation = "https://docs.rs/rustls-cert-gen"
+homepage = "https://github.com/rustls/rcgen/tree/main/rustls-cert-gen"
+repository = "https://github.com/rustls/rcgen"
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+keywords.workspace = true
+
+[features]
+default = ["ring"]
+aws_lc_rs = ["dep:aws-lc-rs", "rcgen/aws_lc_rs", "aws-lc-rs/aws-lc-sys"]
+aws_lc_rs_unstable = ["rcgen/aws_lc_rs_unstable"]
+fips = ["dep:aws-lc-rs", "rcgen/aws_lc_rs", "aws-lc-rs/fips"]
+ring = ["dep:ring-wrapper", "rcgen/ring"]
+redox = ["dep:ring-wrapper", "rcgen/redox"]
+
+[dependencies]
+anyhow = { workspace = true }
+aws-lc-rs = { workspace = true, optional = true }
+bpaf = { workspace = true }
+pem = { workspace = true }
+pki-types = { workspace = true }
+rcgen = { version = "0.14.2", path = "../rcgen", default-features = false, features = ["pem"] }
+ring-wrapper = { workspace = true, optional = true }
+
+[dev-dependencies]
+assert_fs = { workspace = true }
+x509-parser = { workspace = true, features = ["verify"] }
