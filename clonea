@@ -10,9 +10,8 @@ echo "Cloning main easyp repository..."
 git clone https://github.com/gmatht/easyp.git
 cd easyp
 
-# Clone the required submodules
-echo "Updating submodules..."
-git submodule update --init --recursive
+# The required repositories are cloned explicitly by this script.
+# ring-redox remains a separate repository and will also be cloned below.
 
 # Clone additional required repositories
 echo "Cloning additional repositories..."
@@ -44,6 +43,10 @@ git clone https://github.com/gmatht/tokio-rustls.git
 # Clone webpki
 echo "Cloning webpki..."
 git clone https://github.com/gmatht/webpki.git
+
+# Clone ring-redox (kept as a separate repository)
+echo "Cloning ring-redox..."
+git clone https://github.com/gmatht/ring-redox.git
 
 echo "All repositories cloned successfully!"
 echo "You can now build easyp from source."
