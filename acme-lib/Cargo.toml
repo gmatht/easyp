@@ -1,0 +1,46 @@
+[package]
+name = "acme-lib"
+description = "Library for requesting certificates from an ACME provider."
+license = "MIT"
+repository = "https://github.com/algesten/acme-lib"
+readme = "README.md"
+version = "0.9.1"
+authors = ["Martin Algesten <martin@algesten.se>"]
+keywords = ["letsencrypt", "acme"]
+categories = ["web-programming", "api-bindings"]
+edition = "2018"
+
+[dependencies]
+base64 = "0.22"
+jiff = "0.2"
+lazy_static = "1"
+log = "0.4"
+#rustls = "0.23"
+rustls = { path="../rustls" }
+rustls-pemfile = "2.0"
+rustls-pki-types = "1.12"
+x509-parser = "0.18"
+pem = "3.0"
+rcgen = { path = "../rcgen/rcgen", features = ["pem", "ring"], default-features = false }
+rand = "0.8"
+rsa = { version = "0.9", features = ["sha2"], default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+minreq = { path = "../minreq", features = ["https-rustls"], default-features = false }
+
+# Use ring-wrapper for platform-appropriate ring implementation
+ring = { path = "../ring-wrapper" }
+
+[target.'cfg(target_os = "redox")'.dependencies]
+minreq = { path = "../minreq", default-features = false }
+rcgen = { path = "../rcgen/rcgen", features = ["pem", "redox"], default-features = false }
+
+# Force minreq to use our local rustls version
+[patch.crates-io]
+rustls = { path = "../rustls" }
+
+[dev-dependencies]
+env_logger = { version = "0.11", default-features = false }
+futures = "0.3"
+# regex removed - using simple string operations instead
+hex = "0.4"
