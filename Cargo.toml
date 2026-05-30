@@ -1,0 +1,9 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/lsb-loader",
+    "crates/lsb-zlib",
+    "crates/lsb-openssl",
+    "crates/lsb-squeeze-test",
+    "crates/lsb-nix-test",
+]

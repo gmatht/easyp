@@ -1,0 +1,13 @@
+[package]
+name = "lsb-squeeze-test"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[test]]
+name = "squeeze"
+path = "tests/squeeze.rs"
+
+[dependencies]
+lsb-zlib = { path = "../lsb-zlib" }
+lsb-openssl = { path = "../lsb-openssl" }

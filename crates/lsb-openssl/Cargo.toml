@@ -1,0 +1,14 @@
+[package]
+name = "lsb-openssl"
+version = "0.1.0"
+edition = "2021"
+description = "Runtime-loaded OpenSSL/LibreSSL TLS wrapper with version detection"
+license = "MIT"
+
+[dependencies]
+lsb-loader = { path = "../lsb-loader" }
+thiserror = "1.0"
+
+[lib]
+name = "lsb_openssl"
+path = "src/lib.rs"
