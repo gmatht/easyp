@@ -1,0 +1,88 @@
+[package]
+name = "easyp-server"
+version = "0.1.3"
+edition = "2021"
+rust-version = "1.83"
+license = "Apache-2.0 OR ISC OR MIT"
+description = "easyp - On-demand HTTPS server with ACME certificate management"
+homepage = "https://github.com/rustls/rustls"
+repository = "https://github.com/rustls/rustls"
+categories = ["network-programming", "cryptography"]
+default-run = "easyp"
+
+# This crate is now part of the main workspace
+
+[[bin]]
+name = "easyp"
+path = "src/bin/easyp.rs"
+
+
+[features]
+default = ["acme", "extensions", "crypto-ring"]
+acme = ["rustls-acme"]
+extensions = []
+# Crypto backend selection (choose one):
+crypto-ring = ["rcgen/ring"]        # Lighter (~4-5MB binary), ECDSA only, Safari compatible
+crypto-aws = ["rcgen/aws_lc_rs"]    # Heavier (~7-8MB binary), RSA + ECDSA, Safari compatible, required for ACME
+
+# Note: UNIX-specific features like privilege dropping are automatically enabled
+# on Unix-like systems through conditional compilation in the source code
+
+[dependencies]
+# Main rustls library
+rustls = { path = "../rustls", features = ["ring"] }
+
+# ACME functionality
+rustls-acme = { path = "../rustls-acme", optional = true }
+
+# Command line parsing (lightweight alternative to clap)
+lexopt = { workspace = true }
+
+# Async runtime
+tokio = { version = "1.34", features = ["io-util", "macros", "net", "rt-multi-thread", "time"] }
+tokio-rustls = { path = "../tokio-rustls" }
+
+# Logging
+log = "0.4"
+
+urlencoding = "2.1"
+
+# Serialization for stats - removed, using TSV format instead
+
+# Certificate generation and parsing
+rcgen = { path = "../rcgen/rcgen", features = ["pem", "ring", "x509-parser"], default-features = false }
+#rcgen = { workspace = true }
+#rustls-pemfile = { workspace = true }
+rustls-pemfile = { version = "2.2" }
+
+# Dependencies not available on Redox
+[target.'cfg(not(target_os = "redox"))'.dependencies]
+get_if_addrs = "0.5"
+libc = "0.2"
+minreq = { path = "../minreq" }
+md5 = "0.7"
+
+[target.'cfg(target_os = "redox")'.dependencies]
+libc = "0.2"
+minreq = { path = "../minreq" }
+md5 = "0.7"
+
+
+
+[profile.release]
+opt-level = "z"  # Optimize for size
+lto = "fat"      # Link-time optimization
+codegen-units = 1
+panic = "abort"  # Smaller panic handling
+strip = true     # Remove debug symbols
+
+[profile.lto]
+opt-level = "z"
+strip = true
+lto = "fat"
+incremental = false
+overflow-checks = true
+debug = false
+codegen-units = 1
+inherits = "release"
+
