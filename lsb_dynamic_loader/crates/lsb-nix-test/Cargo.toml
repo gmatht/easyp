@@ -1,0 +1,30 @@
+[package]
+name = "lsb-nix-test"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Integration test against Nix store OpenSSL and zlib"
+
+[[test]]
+name = "nix"
+path = "tests/nix.rs"
+
+[[test]]
+name = "openssl_11"
+path = "tests/openssl_11.rs"
+
+[[test]]
+name = "openssl_30"
+path = "tests/openssl_30.rs"
+
+[[test]]
+name = "openssl_35"
+path = "tests/openssl_35.rs"
+
+[[test]]
+name = "libressl"
+path = "tests/libressl.rs"
+
+[dependencies]
+lsb-zlib = { path = "../lsb-zlib" }
+lsb-openssl = { path = "../lsb-openssl" }

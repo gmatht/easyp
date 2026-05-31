@@ -1,0 +1,14 @@
+[package]
+name = "lsb-zlib"
+version = "0.1.0"
+edition = "2021"
+description = "Runtime-loaded zlib (libz) compression wrapper for LSB compatibility"
+license = "MIT"
+
+[dependencies]
+lsb-loader = { path = "../lsb-loader" }
+thiserror = "1.0"
+
+[lib]
+name = "lsb_zlib"
+path = "src/lib.rs"
