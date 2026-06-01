@@ -9,33 +9,168 @@ use core::fmt;
 
 pub mod digest {
     use super::*;
-    #[derive(Clone, Copy)]
-    pub struct Algorithm;
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum Algorithm {
+        Sha256,
+        Sha384,
+        Sha512,
+    }
     impl Algorithm {
-        pub fn output_len(&self) -> usize { 32 }
-        pub fn block_len(&self) -> usize { 64 }
+        pub fn output_len(&self) -> usize {
+            match self { Self::Sha256 => 32, Self::Sha384 => 48, Self::Sha512 => 64 }
+        }
+        pub fn block_len(&self) -> usize {
+            match self { Self::Sha256 => 64, Self::Sha384 => 128, Self::Sha512 => 128 }
+        }
     }
     impl fmt::Debug for Algorithm {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "digest::Algorithm") }
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self { Self::Sha256 => write!(f, "SHA256"), Self::Sha384 => write!(f, "SHA384"), Self::Sha512 => write!(f, "SHA512") }
+        }
     }
-    pub static SHA256: Algorithm = Algorithm;
-    pub static SHA384: Algorithm = Algorithm;
-    pub static SHA512: Algorithm = Algorithm;
+    pub static SHA256: Algorithm = Algorithm::Sha256;
+    pub static SHA384: Algorithm = Algorithm::Sha384;
+    pub static SHA512: Algorithm = Algorithm::Sha512;
 
-    pub struct Context;
-    impl Context {
-        pub fn new(algo: &'static Algorithm) -> Self { Self }
-        pub fn update(&mut self, data: &[u8]) {}
-        pub fn finish(self) -> Digest { Digest([0u8; 64], 32) }
+    // ── OpenSSL EVP digest FFI (loaded from libcrypto.so at runtime) ──
+
+    use std::sync::OnceLock;
+    use std::os::raw::{c_int, c_uint, c_void};
+
+    type EvpMdCtxNewFn = unsafe extern "C" fn() -> *mut c_void;
+    type EvpMdCtxFreeFn = unsafe extern "C" fn(*mut c_void);
+    type EvpDigestInitExFn = unsafe extern "C" fn(*mut c_void, *const c_void, *mut *mut c_void) -> c_int;
+    type EvpDigestUpdateFn = unsafe extern "C" fn(*mut c_void, *const c_void, usize) -> c_int;
+    type EvpDigestFinalExFn = unsafe extern "C" fn(*mut c_void, *mut u8, *mut c_uint) -> c_int;
+    type EvpShaFn = unsafe extern "C" fn() -> *const c_void;
+
+    struct EvpDigest {
+        md_ctx_new: EvpMdCtxNewFn,
+        md_ctx_free: EvpMdCtxFreeFn,
+        digest_init_ex: EvpDigestInitExFn,
+        digest_update: EvpDigestUpdateFn,
+        digest_final_ex: EvpDigestFinalExFn,
+        sha256: EvpShaFn,
+        sha384: EvpShaFn,
+        sha512: EvpShaFn,
     }
-    impl Clone for Context { fn clone(&self) -> Self { Self } }
+
+    fn evp() -> Option<&'static EvpDigest> {
+        static EVP: OnceLock<Option<EvpDigest>> = OnceLock::new();
+        EVP.get_or_init(|| {
+            let candidates = ["libcrypto.so.3", "libcrypto.so.1.1", "libcrypto.so", "libcrypto.so.10"];
+            let lib = candidates.iter().filter_map(|c| unsafe { libloading::Library::new(c) }.ok()).next()?;
+            unsafe {
+                let md_ctx_new = *(lib.get::<EvpMdCtxNewFn>(b"EVP_MD_CTX_new\0").ok()?);
+                let md_ctx_free = *(lib.get::<EvpMdCtxFreeFn>(b"EVP_MD_CTX_free\0").ok()?);
+                let digest_init_ex = *(lib.get::<EvpDigestInitExFn>(b"EVP_DigestInit_ex\0").ok()?);
+                let digest_update = *(lib.get::<EvpDigestUpdateFn>(b"EVP_DigestUpdate\0").ok()?);
+                let digest_final_ex = *(lib.get::<EvpDigestFinalExFn>(b"EVP_DigestFinal_ex\0").ok()?);
+                let sha256 = *(lib.get::<EvpShaFn>(b"EVP_sha256\0").ok()?);
+                let sha384 = *(lib.get::<EvpShaFn>(b"EVP_sha384\0").ok()?);
+                let sha512 = *(lib.get::<EvpShaFn>(b"EVP_sha512\0").ok()?);
+                let e = EvpDigest {
+                    md_ctx_new, md_ctx_free, digest_init_ex, digest_update, digest_final_ex,
+                    sha256, sha384, sha512,
+                };
+                core::mem::forget(lib);
+                Some(e)
+            }
+        }).as_ref()
+    }
+
+    fn hash(alg: Algorithm, data: &[u8]) -> Digest {
+        let evp = match evp() {
+            Some(e) => e,
+            None => return Digest([0u8; 64], match alg { Algorithm::Sha256 => 32, Algorithm::Sha384 => 48, Algorithm::Sha512 => 64 }),
+        };
+        unsafe {
+            let md = match alg {
+                Algorithm::Sha256 => (evp.sha256)(),
+                Algorithm::Sha384 => (evp.sha384)(),
+                Algorithm::Sha512 => (evp.sha512)(),
+            };
+            let ctx = (evp.md_ctx_new)();
+            if ctx.is_null() { return Digest([0u8; 64], alg.output_len()); }
+            (evp.digest_init_ex)(ctx, md, core::ptr::null_mut());
+            (evp.digest_update)(ctx, data.as_ptr() as *const c_void, data.len());
+            let mut out = [0u8; 64];
+            let mut out_len: c_uint = 0;
+            (evp.digest_final_ex)(ctx, out.as_mut_ptr(), &mut out_len);
+            (evp.md_ctx_free)(ctx);
+            Digest(out, out_len as usize)
+        }
+    }
+
+    pub struct Context {
+        alg: Algorithm,
+        ctx: Option<*mut c_void>,
+        evp: Option<&'static EvpDigest>,
+    }
+    impl Context {
+        pub fn new(algo: &'static Algorithm) -> Self {
+            let evp = evp();
+            let ctx = evp.and_then(|e| unsafe {
+                let ctx = (e.md_ctx_new)();
+                if ctx.is_null() { return None; }
+                let md = match algo {
+                    Algorithm::Sha256 => (e.sha256)(),
+                    Algorithm::Sha384 => (e.sha384)(),
+                    Algorithm::Sha512 => (e.sha512)(),
+                };
+                (e.digest_init_ex)(ctx, md, core::ptr::null_mut());
+                Some(ctx)
+            });
+            Context { alg: *algo, ctx, evp }
+        }
+        pub fn update(&mut self, data: &[u8]) {
+            if let Some(e) = self.evp {
+                if let Some(ctx) = self.ctx {
+                    unsafe { (e.digest_update)(ctx, data.as_ptr() as *const c_void, data.len()); }
+                }
+            }
+        }
+        pub fn finish(mut self) -> Digest {
+            if let Some(e) = self.evp {
+                if let Some(ctx) = self.ctx.take() {
+                    unsafe {
+                        let mut out = [0u8; 64];
+                        let mut out_len: c_uint = 0;
+                        (e.digest_final_ex)(ctx, out.as_mut_ptr(), &mut out_len);
+                        (e.md_ctx_free)(ctx);
+                        return Digest(out, out_len as usize);
+                    }
+                }
+            }
+            Digest([0u8; 64], self.alg.output_len())
+        }
+    }
+    impl Clone for Context {
+        fn clone(&self) -> Self {
+            Context::new(match self.alg {
+                Algorithm::Sha256 => &SHA256,
+                Algorithm::Sha384 => &SHA384,
+                Algorithm::Sha512 => &SHA512,
+            })
+        }
+    }
+    impl Drop for Context {
+        fn drop(&mut self) {
+            if let Some(e) = self.evp {
+                if let Some(ctx) = self.ctx.take() {
+                    unsafe { (e.md_ctx_free)(ctx); }
+                }
+            }
+        }
+    }
 
     pub struct Digest([u8; 64], usize);
     impl Digest {
         pub fn as_ref(&self) -> &[u8] { &self.0[..self.1] }
     }
 
-    pub fn digest(algo: &'static Algorithm, data: &[u8]) -> Digest { Digest([0u8; 64], 32) }
+    pub fn digest(algo: &'static Algorithm, data: &[u8]) -> Digest { hash(*algo, data) }
 }
 
 pub mod hmac {

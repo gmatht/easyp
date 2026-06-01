@@ -48,10 +48,7 @@ fn test_ring_version_info() {
 
 #[test]
 fn test_upstream_ring_compatibility() {
-    // Test that our wrapper correctly imports and re-exports the upstream ring crate
-    // This should work on non-redox targets
-
-    // Test digest functionality
+    // Test that our wrapper correctly computes real hashes
     let algorithm = &digest::SHA256;
     let data = b"test data for compatibility check";
     let hash = digest::digest(algorithm, data);
@@ -59,10 +56,36 @@ fn test_upstream_ring_compatibility() {
     // Verify expected hash length
     assert_eq!(hash.as_ref().len(), 32);
 
-    // Test that the hash is actually computed (not all zeros)
-    let hash_bytes = hash.as_ref();
-    let has_non_zero = hash_bytes.iter().any(|&b| b != 0);
-    assert!(has_non_zero, "Hash should not be all zeros");
+    // Verify against a known SHA-256 value
+    let expected: [u8; 32] = [
+        0xd0, 0xe9, 0x4f, 0xd5, 0x8a, 0xc8, 0x5d, 0x7b,
+        0x34, 0xb9, 0xe5, 0x71, 0x2a, 0xb8, 0xc4, 0x41,
+        0xd4, 0xbb, 0xdd, 0xe2, 0x36, 0x07, 0x42, 0xa4,
+        0x2f, 0x43, 0x9d, 0x73, 0x61, 0xef, 0x3c, 0x50,
+    ];
+    assert_eq!(hash.as_ref(), expected, "SHA-256 should match known value");
+
+    // Test SHA-384
+    let hash384 = digest::digest(&digest::SHA384, data);
+    assert_eq!(hash384.as_ref().len(), 48);
+    let has_non_zero = hash384.as_ref().iter().any(|&b| b != 0);
+    assert!(has_non_zero, "SHA-384 should not be all zeros");
+
+    // Test SHA-512
+    let hash512 = digest::digest(&digest::SHA512, data);
+    assert_eq!(hash512.as_ref().len(), 64);
+    let has_non_zero = hash512.as_ref().iter().any(|&b| b != 0);
+    assert!(has_non_zero, "SHA-512 should not be all zeros");
+
+    // Test Context streaming
+    let mut ctx = digest::Context::new(&digest::SHA256);
+    ctx.update(b"test ");
+    ctx.update(b"data ");
+    ctx.update(b"for ");
+    ctx.update(b"compatibility ");
+    ctx.update(b"check");
+    let streamed_hash = ctx.finish();
+    assert_eq!(streamed_hash.as_ref(), expected, "Streaming SHA-256 should match");
 
     println!("Upstream ring compatibility test passed");
 }

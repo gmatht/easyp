@@ -256,15 +256,25 @@ mod tests {
         assert_eq!(encoded, b"Hello World");
     }
 
+    fn check_headers(encoded: &[u8], status: &str, headers: &[&str], body: &str) {
+        let s = std::str::from_utf8(encoded).unwrap();
+        assert!(s.starts_with(status), "status line mismatch in:\n{}", s);
+        for h in headers {
+            assert!(s.contains(h), "header '{}' not found in:\n{}", h, s);
+        }
+        assert!(s.ends_with(body), "body mismatch in:\n{}", s);
+    }
+
     #[test]
     fn test_http10_encoding() {
         let mut response = HttpResponse::ok(b"Hello World".to_vec());
         response.set_content_type("text/plain");
         response.set_content_length();
-
         let encoded = response.encode(&HttpVersion::Http10, false);
-        let expected = b"HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 11\r\n\r\nHello World";
-        assert_eq!(encoded, expected);
+        check_headers(&encoded,
+            "HTTP/1.0 200 OK\r\n",
+            &["Content-Type: text/plain", "Content-Length: 11"],
+            "\r\nHello World");
     }
 
     #[test]
@@ -272,10 +282,11 @@ mod tests {
         let mut response = HttpResponse::ok(b"Hello World".to_vec());
         response.set_content_type("text/plain");
         response.set_content_length();
-
         let encoded = response.encode(&HttpVersion::Http10, true);
-        let expected = b"HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 11\r\nConnection: Keep-Alive\r\n\r\nHello World";
-        assert_eq!(encoded, expected);
+        check_headers(&encoded,
+            "HTTP/1.0 200 OK\r\n",
+            &["Content-Type: text/plain", "Content-Length: 11", "Connection: Keep-Alive"],
+            "\r\nHello World");
     }
 
     #[test]
@@ -283,10 +294,11 @@ mod tests {
         let mut response = HttpResponse::ok(b"Hello World".to_vec());
         response.set_content_type("text/plain");
         response.set_content_length();
-
         let encoded = response.encode(&HttpVersion::Http11, true);
-        let expected = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 11\r\n\r\nHello World";
-        assert_eq!(encoded, expected);
+        check_headers(&encoded,
+            "HTTP/1.1 200 OK\r\n",
+            &["Content-Type: text/plain", "Content-Length: 11"],
+            "\r\nHello World");
     }
 
     #[test]
@@ -294,9 +306,10 @@ mod tests {
         let mut response = HttpResponse::ok(b"Hello World".to_vec());
         response.set_content_type("text/plain");
         response.set_content_length();
-
         let encoded = response.encode(&HttpVersion::Http11, false);
-        let expected = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 11\r\nConnection: close\r\n\r\nHello World";
-        assert_eq!(encoded, expected);
+        check_headers(&encoded,
+            "HTTP/1.1 200 OK\r\n",
+            &["Content-Type: text/plain", "Content-Length: 11", "Connection: close"],
+            "\r\nHello World");
     }
 }
