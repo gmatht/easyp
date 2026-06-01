@@ -201,13 +201,11 @@ impl HttpResponse {
     pub fn encode(&self, version: &HttpVersion, keep_alive: bool) -> Vec<u8> {
         let mut response = Vec::new();
 
-        // HTTP/0.9: No status line, no headers, just body
         if *version == HttpVersion::Http09 {
             response.extend_from_slice(&self.body);
             return response;
         }
 
-        // HTTP/1.0 and 1.1: Status line
         let status_line = format!("{} {} {}\r\n",
             version.status_line_prefix(),
             self.status_code,
@@ -215,37 +213,32 @@ impl HttpResponse {
         );
         response.extend_from_slice(status_line.as_bytes());
 
-        // Headers
         for (name, value) in &self.headers {
             let header_line = format!("{}: {}\r\n", name, value);
             response.extend_from_slice(header_line.as_bytes());
         }
 
-        // Connection header based on version and keep_alive flag
         match version {
             HttpVersion::Http11 => {
                 if !keep_alive {
                     response.extend_from_slice(b"Connection: close\r\n");
                 }
-                // HTTP/1.1 persistent connections are default, no header needed if keep_alive
             },
             HttpVersion::Http10 => {
                 if keep_alive {
                     response.extend_from_slice(b"Connection: Keep-Alive\r\n");
                 }
-                // HTTP/1.0 closes by default, no header needed if not keep_alive
             },
-            HttpVersion::Http09 => {
-                // Should not reach here due to early return above
-            }
+            HttpVersion::Http2 | HttpVersion::Http3 => {
+                // Binary-framed protocols don't use text-based Connection headers.
+                // The caller should use the protocol library for the actual framing.
+                // This text form is used for HTTP/1 upgrade responses or fallback only.
+            },
+            HttpVersion::Http09 => {}
         }
 
-        // End of headers
         response.extend_from_slice(b"\r\n");
-
-        // Body
         response.extend_from_slice(&self.body);
-
         response
     }
 }

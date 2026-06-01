@@ -197,7 +197,7 @@ impl OnDemandCertResolver {
         };
         
         // Generate key pair - try RSA first, fallback to ECDSA
-        let key_pair = if let Ok(rsa_key) = KeyPair::generate_rsa_for(&rcgen::PKCS_RSA_SHA256, rcgen::RsaKeySize::_2048) {
+        let key_pair = if let Ok(rsa_key) = KeyPair::generate_for(&rcgen::PKCS_RSA_SHA256) {
             println!("✅ Generated RSA key pair for Safari compatibility");
             rsa_key
         } else {

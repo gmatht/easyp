@@ -10,3 +10,11 @@ pub mod file_handler;
 pub mod http_response;
 pub mod http_version;
 pub mod secure_file_server_module;
+
+#[cfg(feature = "http2")]
+pub mod http2_handler;
+
+#[cfg(feature = "http3")]
+pub mod http3_handler;
+#[cfg(feature = "http3")]
+pub mod http3_monitor;

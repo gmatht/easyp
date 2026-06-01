@@ -6,4 +6,5 @@ members = [
     "crates/lsb-openssl",
     "crates/lsb-squeeze-test",
     "crates/lsb-nix-test",
+    "http_dynamic_loader",
 ]

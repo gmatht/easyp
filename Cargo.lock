@@ -14,7 +14,7 @@ dependencies = [
  "pem",
  "rand",
  "rcgen 0.14.5",
- "ring 0.17.14",
+ "ring 0.1.0",
  "rsa",
  "rustls",
  "rustls-pemfile 2.2.0",
@@ -178,7 +178,7 @@ dependencies = [
  "nom",
  "num-traits",
  "rusticata-macros",
- "thiserror",
+ "thiserror 2.0.17",
  "time",
 ]
 
@@ -328,13 +328,6 @@ dependencies = [
 [[package]]
 name = "bogo"
 version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "env_logger",
- "nix",
- "rustls",
- "rustls-webpki",
-]
 
 [[package]]
 name = "brotli"
@@ -416,12 +409,6 @@ name = "cfg-if"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2fd1289c04a9ea8cb22300a459a72a385d7c73d3259e2ed7dcb2af674838cfa9"
-
-[[package]]
-name = "cfg_aliases"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "chrono"
@@ -581,6 +568,7 @@ name = "easyp-server"
 version = "0.1.3"
 dependencies = [
  "get_if_addrs",
+ "http-dynamic-loader",
  "lexopt",
  "libc",
  "log",
@@ -799,6 +787,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
+name = "http-dynamic-loader"
+version = "0.1.0"
+dependencies = [
+ "lsb-loader",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "httpdate"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -986,6 +982,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
 
 [[package]]
+name = "lsb-loader"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "libloading",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "macro_rules_attribute"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1075,18 +1080,6 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "tempfile",
-]
-
-[[package]]
-name = "nix"
-version = "0.30.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "74523f3a35e05aba87a1d978330aef40f67b0304ac79c1c00b294c9830543db6"
-dependencies = [
- "bitflags",
- "cfg-if",
- "cfg_aliases",
- "libc",
 ]
 
 [[package]]
@@ -1431,7 +1424,7 @@ dependencies = [
  "aws-lc-rs",
  "openssl",
  "pem",
- "ring 0.17.14",
+ "ring 0.1.0",
  "rustls-pki-types",
  "time",
  "x509-parser",
@@ -1447,7 +1440,7 @@ checksum = "5fae430c6b28f1ad601274e78b7dffa0546de0b73b4cd32f46723c0c2a16f7a5"
 dependencies = [
  "aws-lc-rs",
  "pem",
- "ring 0.17.14 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ring 0.17.14",
  "rustls-pki-types",
  "time",
  "yasna",
@@ -1493,23 +1486,9 @@ checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
 
 [[package]]
 name = "ring"
-version = "0.17.8"
+version = "0.1.0"
 dependencies = [
- "cc",
- "cfg-if",
- "getrandom 0.2.16",
- "libc",
- "spin",
- "untrusted",
- "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "ring"
-version = "0.17.14"
-dependencies = [
- "ring 0.17.14 (registry+https://github.com/rust-lang/crates.io-index)",
- "ring 0.17.8",
+ "ring 0.17.14",
 ]
 
 [[package]]
@@ -1603,7 +1582,7 @@ dependencies = [
  "num-bigint",
  "once_cell",
  "rcgen 0.14.5",
- "ring 0.17.14",
+ "ring 0.1.0",
  "rustls-pki-types",
  "rustls-test",
  "rustls-webpki",
@@ -1627,19 +1606,16 @@ dependencies = [
  "get_if_addrs",
  "log",
  "rand",
- "rcgen 0.14.5",
- "ring 0.17.14",
+ "rcgen 0.14.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "rustls",
  "rustls-pemfile 2.2.0",
  "rustls-pki-types",
  "serde",
  "serde_json",
  "sha2",
- "thiserror",
+ "thiserror 2.0.17",
  "time",
  "tokio",
- "webpki",
- "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -1684,9 +1660,6 @@ dependencies = [
 [[package]]
 name = "rustls-test"
 version = "0.1.0"
-dependencies = [
- "rustls",
-]
 
 [[package]]
 name = "rustls-webpki"
@@ -1915,11 +1888,31 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
+version = "1.0.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
+dependencies = [
+ "thiserror-impl 1.0.69",
+]
+
+[[package]]
+name = "thiserror"
 version = "2.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f63587ca0f12b72a0600bcba1d40081f830876000bb46dd2337a3051618f4fc8"
 dependencies = [
- "thiserror-impl",
+ "thiserror-impl 2.0.17",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "1.0.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -2146,29 +2139,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "webpki"
-version = "0.22.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed63aea5ce73d0ff405984102c42de94fc55a6b75765d621c65262469b3c9b53"
-dependencies = [
- "ring 0.17.14 (registry+https://github.com/rust-lang/crates.io-index)",
- "untrusted",
-]
-
-[[package]]
 name = "webpki-roots"
 version = "0.25.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f20c57d8d7db6d3b86154206ae5d8fba62dd39573114de97c2cb0578251f8e1"
-
-[[package]]
-name = "webpki-roots"
-version = "0.26.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
-dependencies = [
- "webpki-roots 1.0.3",
-]
 
 [[package]]
 name = "webpki-roots"
@@ -2427,9 +2401,9 @@ dependencies = [
  "lazy_static",
  "nom",
  "oid-registry",
- "ring 0.17.14 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ring 0.17.14",
  "rusticata-macros",
- "thiserror",
+ "thiserror 2.0.17",
  "time",
 ]
 

@@ -86,6 +86,11 @@ impl ConnectionPolicy {
                     true
                 }
             }
+            HttpVersion::Http2 | HttpVersion::Http3 => {
+                // HTTP/2 and HTTP/3 are multiplexed – the session handles concurrency.
+                // Keep-alive is not applicable at the connection level.
+                true
+            }
         }
     }
 
