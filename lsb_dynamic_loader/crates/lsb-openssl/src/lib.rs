@@ -1,5 +1,5 @@
 //! Runtime-loaded OpenSSL/LibreSSL wrapper that normalises across versions.
-use lsb_loader::LoadedLibrary;
+use lsb_loader::{LoadedLibrary, LoaderError};
 use std::ffi::{CStr, CString};
 use std::mem::transmute;
 use std::os::raw::{c_char, c_int, c_ulong, c_void};
@@ -37,6 +37,38 @@ type SslFreeFn = unsafe extern "C" fn(ssl: *mut c_void);
 type SslCtxFreeFn = unsafe extern "C" fn(ctx: *mut c_void);
 type SslCtxUseCertFileFn = unsafe extern "C" fn(ctx: *mut c_void, file: *const c_char, typ: c_int) -> c_int;
 type SslCtxUseKeyFileFn = unsafe extern "C" fn(ctx: *mut c_void, file: *const c_char, typ: c_int) -> c_int;
+type SslCtxSetAlpnProtosFn = unsafe extern "C" fn(ctx: *mut c_void, wire: *const u8, len: u16) -> c_int;
+type SslSetAlpnProtosFn = unsafe extern "C" fn(ssl: *mut c_void, wire: *const u8, len: u16) -> c_int;
+type SslGet0AlpnSelectedFn = unsafe extern "C" fn(ssl: *mut c_void, data: *mut *const u8, len: *mut u16);
+type SslCtxSetAlpnSelectCbFn = unsafe extern "C" fn(ctx: *mut c_void, cb: Option<AlpnSelectCb>, arg: *mut c_void);
+
+pub const SSL_TLSEXT_ERR_OK: i32 = 0;
+pub const SSL_TLSEXT_ERR_ALERT_FATAL: i32 = 2;
+const TLSEXT_NAMETYPE_host_name: c_int = 0;
+
+type AlpnSelectCb = unsafe extern "C" fn(
+    ssl: *mut c_void,
+    out: *mut *const u8,
+    outlen: *mut u8,
+    in_data: *const u8,
+    inlen: u32,
+    arg: *mut c_void,
+) -> i32;
+type SslSetAcceptStateFn = unsafe extern "C" fn(ssl: *mut c_void);
+pub type ServernameCallbackFn = unsafe extern "C" fn(
+    ssl: *mut c_void,
+    al: *mut c_int,
+    arg: *mut c_void,
+) -> c_int;
+type SslGetServernameFn = unsafe extern "C" fn(ssl: *mut c_void, typ: c_int) -> *const c_char;
+type SslUseCertificateFn = unsafe extern "C" fn(ssl: *mut c_void, x509: *mut c_void) -> c_int;
+type SslUsePrivateKeyFn = unsafe extern "C" fn(ssl: *mut c_void, pkey: *mut c_void) -> c_int;
+type SslCtxSetServernameCallbackFn = unsafe extern "C" fn(
+    ctx: *mut c_void,
+    cb: Option<ServernameCallbackFn>,
+    arg: *mut c_void,
+) -> c_int;
+type SslCheckPrivateKeyFn = unsafe extern "C" fn(ssl: *mut c_void) -> c_int;
 type SslGetErrorFn = unsafe extern "C" fn(ssl: *mut c_void, ret: c_int) -> c_int;
 type ErrGetErrorFn = unsafe extern "C" fn() -> c_ulong;
 type ErrErrorStringFn = unsafe extern "C" fn(e: c_ulong, buf: *mut c_char, len: c_int) -> *mut c_char;
@@ -66,6 +98,16 @@ pub struct Openssl {
     ssl_ctx_free: SslCtxFreeFn,
     pub(crate) ssl_ctx_use_cert_file: SslCtxUseCertFileFn,
     pub(crate) ssl_ctx_use_key_file: SslCtxUseKeyFileFn,
+    ssl_ctx_set_alpn_protos: Option<SslCtxSetAlpnProtosFn>,
+    ssl_set_alpn_protos: Option<SslSetAlpnProtosFn>,
+    ssl_get0_alpn_selected: Option<SslGet0AlpnSelectedFn>,
+    ssl_ctx_set_alpn_select_cb: Option<SslCtxSetAlpnSelectCbFn>,
+    ssl_set_accept_state: Option<SslSetAcceptStateFn>,
+    ssl_ctx_set_servername_callback: Option<SslCtxSetServernameCallbackFn>,
+    ssl_get_servername: Option<SslGetServernameFn>,
+    ssl_use_certificate: Option<SslUseCertificateFn>,
+    ssl_use_private_key: Option<SslUsePrivateKeyFn>,
+    ssl_check_private_key: Option<SslCheckPrivateKeyFn>,
     ssl_get_error: SslGetErrorFn,
     err_get_error: Option<ErrGetErrorFn>,
     err_error_string: Option<ErrErrorStringFn>,
@@ -138,6 +180,26 @@ impl Openssl {
                     Err(_) => return Err(SslError::Other("SSL_CTX_use_PrivateKey_file not found".into())),
                 };
             let ssl_get_error: SslGetErrorFn = transmute(libssl.get_symbol_raw("SSL_get_error")?);
+            let ssl_ctx_set_alpn_protos: Option<SslCtxSetAlpnProtosFn> =
+                libssl.get_symbol_raw("SSL_CTX_set_alpn_protos").ok().map(|p| transmute(p));
+            let ssl_set_alpn_protos: Option<SslSetAlpnProtosFn> =
+                libssl.get_symbol_raw("SSL_set_alpn_protos").ok().map(|p| transmute(p));
+            let ssl_get0_alpn_selected: Option<SslGet0AlpnSelectedFn> =
+                libssl.get_symbol_raw("SSL_get0_alpn_selected").ok().map(|p| transmute(p));
+            let ssl_ctx_set_alpn_select_cb: Option<SslCtxSetAlpnSelectCbFn> =
+                libssl.get_symbol_raw("SSL_CTX_set_alpn_select_cb").ok().map(|p| transmute(p));
+            let ssl_set_accept_state: Option<SslSetAcceptStateFn> =
+                libssl.get_symbol_raw("SSL_set_accept_state").ok().map(|p| transmute(p));
+            let ssl_ctx_set_servername_callback: Option<SslCtxSetServernameCallbackFn> =
+                libssl.get_symbol_raw("SSL_CTX_set_tlsext_servername_callback").ok().map(|p| transmute(p));
+            let ssl_get_servername: Option<SslGetServernameFn> =
+                libssl.get_symbol_raw("SSL_get_servername").ok().map(|p| transmute(p));
+            let ssl_use_certificate: Option<SslUseCertificateFn> =
+                libssl.get_symbol_raw("SSL_use_certificate").ok().map(|p| transmute(p));
+            let ssl_use_private_key: Option<SslUsePrivateKeyFn> =
+                libssl.get_symbol_raw("SSL_use_PrivateKey").ok().map(|p| transmute(p));
+            let ssl_check_private_key: Option<SslCheckPrivateKeyFn> =
+                libssl.get_symbol_raw("SSL_check_private_key").ok().map(|p| transmute(p));
 
             let err_get_error: Option<ErrGetErrorFn> = libcrypto
                 .as_ref()
@@ -185,6 +247,16 @@ impl Openssl {
                 ssl_ctx_free,
                 ssl_ctx_use_cert_file,
                 ssl_ctx_use_key_file,
+                ssl_ctx_set_alpn_protos,
+                ssl_set_alpn_protos,
+                ssl_get0_alpn_selected,
+                ssl_ctx_set_alpn_select_cb,
+                ssl_set_accept_state,
+                ssl_ctx_set_servername_callback,
+                ssl_get_servername,
+                ssl_use_certificate,
+                ssl_use_private_key,
+                ssl_check_private_key,
                 ssl_get_error,
                 err_get_error,
                 err_error_string,
@@ -318,7 +390,68 @@ impl Openssl {
             ssl_ctx_free: self.ssl_ctx_free,
             ssl_ctx_use_cert_file: self.ssl_ctx_use_cert_file,
             ssl_ctx_use_key_file: self.ssl_ctx_use_key_file,
+            ssl_ctx_set_alpn_protos: self.ssl_ctx_set_alpn_protos,
+            ssl_ctx_set_alpn_select_cb: self.ssl_ctx_set_alpn_select_cb,
+            ssl_ctx_set_servername_callback: self.ssl_ctx_set_servername_callback,
         })
+    }
+
+    pub fn ctx_set_servername_callback(
+        &self,
+        ctx: &SslCtx,
+        cb: ServernameCallbackFn,
+        arg: *mut c_void,
+    ) -> Result<(), SslError> {
+        match self.ssl_ctx_set_servername_callback {
+            Some(f) => {
+                unsafe { f(ctx.as_ptr(), Some(cb), arg); }
+                Ok(())
+            }
+            None => Err(SslError::Other("SNI callback not available in this OpenSSL version".into())),
+        }
+    }
+
+    pub fn ssl_get_servername(&self, ssl: *mut c_void) -> Option<String> {
+        self.ssl_get_servername.and_then(|f| {
+            unsafe {
+                let p = f(ssl, TLSEXT_NAMETYPE_host_name);
+                if p.is_null() { None }
+                else { Some(CStr::from_ptr(p).to_string_lossy().into_owned()) }
+            }
+        })
+    }
+
+    pub fn ssl_use_certificate(&self, ssl: *mut c_void, x509: *mut c_void) -> Result<(), SslError> {
+        match self.ssl_use_certificate {
+            Some(f) => {
+                let rc = unsafe { f(ssl, x509) };
+                if rc != 1 { Err(SslError::Other("SSL_use_certificate failed".into())) }
+                else { Ok(()) }
+            }
+            None => Err(SslError::Other("SSL_use_certificate not available".into())),
+        }
+    }
+
+    pub fn ssl_use_private_key(&self, ssl: *mut c_void, pkey: *mut c_void) -> Result<(), SslError> {
+        match self.ssl_use_private_key {
+            Some(f) => {
+                let rc = unsafe { f(ssl, pkey) };
+                if rc != 1 { Err(SslError::Other("SSL_use_PrivateKey failed".into())) }
+                else { Ok(()) }
+            }
+            None => Err(SslError::Other("SSL_use_PrivateKey not available".into())),
+        }
+    }
+
+    pub fn ssl_check_private_key(&self, ssl: *mut c_void) -> Result<(), SslError> {
+        match self.ssl_check_private_key {
+            Some(f) => {
+                let rc = unsafe { f(ssl) };
+                if rc != 1 { Err(SslError::Other("SSL_check_private_key failed".into())) }
+                else { Ok(()) }
+            }
+            None => Err(SslError::Other("SSL_check_private_key not available".into())),
+        }
     }
 
     pub fn ssl_new_from_fd(&self, ctx: &SslCtx, fd: std::os::unix::io::RawFd) -> Result<SslConn, SslError> {
@@ -342,6 +475,9 @@ impl Openssl {
                 ssl_write: self.ssl_write,
                 ssl_shutdown: self.ssl_shutdown,
                 ssl_get_error: self.ssl_get_error,
+                ssl_set_alpn_protos: self.ssl_set_alpn_protos,
+                ssl_get0_alpn_selected: self.ssl_get0_alpn_selected,
+                ssl_set_accept_state: self.ssl_set_accept_state,
                 err_get_error: self.err_get_error,
                 err_error_string: self.err_error_string,
             })
@@ -349,11 +485,16 @@ impl Openssl {
     }
 }
 
+unsafe impl Send for Openssl {}
+
 pub struct SslCtx {
     ctx: *mut c_void,
     ssl_ctx_free: SslCtxFreeFn,
     ssl_ctx_use_cert_file: SslCtxUseCertFileFn,
     ssl_ctx_use_key_file: SslCtxUseKeyFileFn,
+    ssl_ctx_set_alpn_protos: Option<SslCtxSetAlpnProtosFn>,
+    ssl_ctx_set_alpn_select_cb: Option<SslCtxSetAlpnSelectCbFn>,
+    ssl_ctx_set_servername_callback: Option<SslCtxSetServernameCallbackFn>,
 }
 
 unsafe impl Send for SslCtx {}
@@ -384,6 +525,59 @@ impl SslCtx {
         }
         Ok(())
     }
+
+    pub fn set_alpn_protocols(&self, protocols: &[&[u8]]) -> Result<(), SslError> {
+        match self.ssl_ctx_set_alpn_protos {
+            Some(f) => {
+                // Build wire format: each protocol is length-byte prefixed
+                let mut wire = Vec::new();
+                for p in protocols {
+                    wire.push(p.len() as u8);
+                    wire.extend_from_slice(p);
+                }
+                unsafe {
+                    let rc = f(self.ctx, wire.as_ptr(), wire.len() as u16);
+                    if rc != 0 {
+                        return Err(SslError::Other("SSL_CTX_set_alpn_protos failed".into()));
+                    }
+                }
+                Ok(())
+            }
+            None => Err(SslError::Other("ALPN not available in this OpenSSL version".into())),
+        }
+    }
+
+    /// Register ALPN protocols for the server via select callback.
+    /// `wire` must have layout: [total_len: u32] [wire_format_protocols...]
+    pub fn set_alpn_select_callback(&self, wire: &'static [u8]) -> Result<(), SslError> {
+        match self.ssl_ctx_set_alpn_select_cb {
+            Some(f) => {
+                unsafe {
+                    f(self.ctx, Some(alpn_select_cb_static), wire.as_ptr() as *mut c_void);
+                }
+                Ok(())
+            }
+            None => Err(SslError::Other("ALPN select callback not available".into())),
+        }
+    }
+}
+
+impl SslCtx {
+    /// Register a per-connection SNI callback.
+    /// The callback fires during `SSL_accept` with the SSL pointer and user arg.
+    pub fn set_servername_callback(
+        &self,
+        cb: ServernameCallbackFn,
+        arg: *mut c_void,
+    ) -> Result<(), SslError> {
+        match self.ssl_ctx_set_servername_callback {
+            Some(f) => {
+                unsafe { f(self.ctx, Some(cb), arg); }
+                Ok(())
+            }
+            None => Err(SslError::Other("SNI callback not available".into())),
+        }
+    }
 }
 
 impl Drop for SslCtx {
@@ -401,6 +595,9 @@ pub struct SslConn {
     ssl_write: SslWriteFn,
     ssl_shutdown: SslShutdownFn,
     ssl_get_error: SslGetErrorFn,
+    ssl_set_alpn_protos: Option<SslSetAlpnProtosFn>,
+    ssl_get0_alpn_selected: Option<SslGet0AlpnSelectedFn>,
+    ssl_set_accept_state: Option<SslSetAcceptStateFn>,
     err_get_error: Option<ErrGetErrorFn>,
     err_error_string: Option<ErrErrorStringFn>,
 }
@@ -467,6 +664,48 @@ impl SslConn {
         Ok(())
     }
 
+    pub fn get_alpn_selected(&self) -> Option<Vec<u8>> {
+        self.ssl_get0_alpn_selected.and_then(|f| {
+            unsafe {
+                let mut data: *const u8 = std::ptr::null();
+                let mut len: u16 = 0;
+                f(self.ssl, &mut data, &mut len);
+                if len > 0 && !data.is_null() {
+                    Some(std::slice::from_raw_parts(data, len as usize).to_vec())
+                } else {
+                    None
+                }
+            }
+        })
+    }
+
+    pub fn set_alpn_protocols(&self, protocols: &[&[u8]]) -> Result<(), SslError> {
+        match self.ssl_set_alpn_protos {
+            Some(f) => {
+                let mut wire = Vec::new();
+                for p in protocols {
+                    wire.push(p.len() as u8);
+                    wire.extend_from_slice(p);
+                }
+                unsafe {
+                    let rc = f(self.ssl, wire.as_ptr(), wire.len() as u16);
+                    if rc != 0 {
+                        return Err(SslError::Other("SSL_set_alpn_protos failed".into()));
+                    }
+                }
+                Ok(())
+            }
+            None => Err(SslError::Other("SSL_set_alpn_protos not available".into())),
+        }
+    }
+
+    pub fn set_accept_state(&self) -> Result<(), SslError> {
+        match self.ssl_set_accept_state {
+            Some(f) => { unsafe { f(self.ssl); } Ok(()) }
+            None => Err(SslError::Other("SSL_set_accept_state not available".into())),
+        }
+    }
+
     fn get_error_string(&self) -> String {
         unsafe {
             if let (Some(get), Some(str_fn)) = (self.err_get_error, self.err_error_string) {
@@ -488,6 +727,58 @@ impl Drop for SslConn {
     fn drop(&mut self) {
         unsafe { (self.ssl_free)(self.ssl); }
     }
+}
+
+// ── ALPN server callback ─────────────────────────────────────
+
+// ALPN protocol array stored as a static with the total length prepended.
+// Layout: [total_len: u32] [wire_format_protocols...]
+// The callback receives arg pointing to the full array; we read total_len first.
+
+unsafe extern "C" fn alpn_select_cb_static(
+    _ssl: *mut c_void,
+    out: *mut *const u8,
+    outlen: *mut u8,
+    in_data: *const u8,
+    inlen: u32,
+    arg: *mut c_void,
+) -> i32 {
+    // The first 4 bytes at arg are the total length of the wire-format protocol list
+    let total_len = *(arg as *const u32);
+    let server_bytes = std::slice::from_raw_parts(arg as *const u8, 4 + total_len as usize);
+    let server_body = &server_bytes[4..];
+    let client_protos = std::slice::from_raw_parts(in_data, inlen as usize);
+
+    let mut so = 0;
+    while so < server_body.len() {
+        let splen = server_body[so] as usize;
+        if so + 1 + splen > server_body.len() { break; }
+        let sp = &server_body[so + 1..so + 1 + splen];
+        let mut co = 0;
+        while co < client_protos.len() {
+            let cplen = client_protos[co] as usize;
+            if co + 1 + cplen <= client_protos.len() && &client_protos[co + 1..co + 1 + cplen] == sp {
+                *out = server_body.as_ptr().add(so + 1);
+                *outlen = splen as u8;
+                return SSL_TLSEXT_ERR_OK;
+            }
+            co += 1 + cplen;
+        }
+        so += 1 + splen;
+    }
+    SSL_TLSEXT_ERR_OK
+}
+
+/// X.509 certificate generation via OpenSSL (replaces rcgen).
+pub mod certs;
+
+// Public helper: load libcrypto independently (used by certs module).
+pub fn load_libcrypto() -> Result<LoadedLibrary, LoaderError> {
+    let crypto_candidates = [
+        "libcrypto.so.3", "libcrypto.so.1.1", "libcrypto.so.1.0.0",
+        "libcrypto.so.10", "libcrypto.so",
+    ];
+    LoadedLibrary::load_from_candidates(&crypto_candidates, &["ERR_get_error"])
 }
 
 #[cfg(test)]

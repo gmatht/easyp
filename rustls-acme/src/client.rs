@@ -636,8 +636,13 @@ impl AcmeClient {
             }
         };
 
-        // Create CertifiedKey using the crypto provider
-        let provider = rustls::crypto::ring::default_provider();
+        // Create CertifiedKey using the process default crypto provider
+        let provider = rustls::crypto::CryptoProvider::get_default()
+            .or_else(|| {
+                let p = rustls::crypto::CryptoProvider::from_crate_features()?;
+                Some(Box::leak(Box::new(Arc::new(p))))
+            })
+            .expect("No CryptoProvider available — call CryptoProvider::install_default() or enable a rustls feature like 'ring'");
         println!("🔍 Creating CertifiedKey with {} certificates", cert_chain.len());
         
         // Debug: Print certificate details

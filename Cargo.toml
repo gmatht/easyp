@@ -18,6 +18,13 @@ members = [
   "tokio-rustls",
   # Ring wrapper for redox compatibility
   "ring-wrapper",
+  # LSB dynamic loader base
+  "lsb_dynamic_loader/crates/lsb-loader",
+  # LSB zlib wrapper
+  "lsb_dynamic_loader/crates/lsb-zlib",
+  # LSB OpenSSL wrapper
+  "lsb_dynamic_loader/crates/lsb-openssl",
+  # LSB crypto provider for rustls
 ]
 
 ## Deliberately not included in `members`:
@@ -81,10 +88,11 @@ rand = "0.8"
 rand_core = { version = "0.6", features = ["getrandom"] }
 rayon = "1.7"
 rcgen = { path = "rcgen/rcgen", features = ["pem", "ring"], default-features = false }
+ring = { path = "ring-wrapper" }
 ring-wrapper = { path = "ring-wrapper", package = "ring" }
+rustls = { path = "rustls" }
 rsa = { version = "0.9", features = ["sha2"], default-features = false }
 rustc-hash = "2"
-rustls = { path = "rustls" }
 rustls-graviola = { version = "0.2" }
 rustls-test = { path = "rustls-test/" }
 rustls-fuzzing-provider = { path = "rustls-fuzzing-provider/" }
@@ -104,6 +112,9 @@ x25519-dalek = "2"
 x509-parser = "0.18"
 zeroize = "1.8"
 zlib-rs = "0.5"
+lsb-loader = { path = "lsb_dynamic_loader/crates/lsb-loader" }
+lsb-zlib = { path = "lsb_dynamic_loader/crates/lsb-zlib" }
+lsb-openssl = { path = "lsb_dynamic_loader/crates/lsb-openssl" }
 #rustls-pemfile = "2.2"
 rustls-pemfile = { version = "2.2" }
 #rcgen = { workspace = true }
@@ -137,6 +148,7 @@ opt-level = 2
 # ensure all our tests are against the local copy, never
 # against the latest _published_ copy.
 [patch.crates-io]
+ring = { path = "ring-wrapper" }
 rustls = { path = "rustls" }
 #rcgen = { path = "rcgen/rcgen", version = "0.14.5" }
 minreq = { path = "minreq" }

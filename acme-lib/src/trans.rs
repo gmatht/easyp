@@ -1,4 +1,4 @@
-use ring::signature::{EcdsaKeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
+
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -202,7 +202,7 @@ fn jws_with<T: Serialize + ?Sized>(
 
     let to_sign = format!("{}.{}", protected, payload);
     
-    // Get the private key and create EcdsaKeyPair
+    // Get the private key and sign with OpenSSL (ECDSA P-256)
     let private_key = key.private_key();
     let pkcs8 = match private_key {
         rustls_pki_types::PrivateKeyDer::Pkcs8(pkcs8) => {
@@ -210,30 +210,15 @@ fn jws_with<T: Serialize + ?Sized>(
             pkcs8.secret_pkcs8_der().to_vec()
         },
         _ => {
-            println!("🔍 ACME-LIB: ❌ Unsupported private key format for JWS signing: {:?}", private_key);
+            println!("🔍 ACME-LIB: ❌ Unsupported private key format for JWS signing");
             return Err("Unsupported private key format for JWS signing".into());
         },
     };
     
-    use ring::rand::SystemRandom;
+    let signature_bytes = lsb_openssl::certs::ecdsa_sign_p256(&pkcs8, to_sign.as_bytes())
+        .map_err(|e| format!("Failed to sign via OpenSSL: {}", e))?;
     
-    let rng = SystemRandom::new();
-    let key_pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &pkcs8, &rng)
-        .map_err(|e| format!("Failed to create EcdsaKeyPair: {:?}", e))?;
-    
-    // Sign the digest
-    let signature = key_pair.sign(&rng, to_sign.as_bytes())
-        .map_err(|e| format!("Failed to sign: {:?}", e))?;
-    let signature_bytes = signature.as_ref();
-    
-    // For ECDSA P-256, the signature is 64 bytes: 32 bytes r + 32 bytes s
-    if signature_bytes.len() != 64 {
-        return Err("Invalid ECDSA signature length".into());
-    }
-    
-    // Ring already returns the signature in the correct format (r || s)
-    // which matches what OpenSSL was doing manually
-    let signature = base64url(signature_bytes);
+    let signature = base64url(&signature_bytes);
 
     let jws = Jws::new(protected, payload, signature);
 

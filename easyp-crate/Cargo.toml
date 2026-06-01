@@ -18,22 +18,16 @@ path = "src/bin/easyp.rs"
 
 
 [features]
-default = ["acme", "extensions", "crypto-ring"]
+default = ["acme", "extensions"]
 acme = ["rustls-acme"]
 extensions = []
 http2 = ["http-dynamic-loader/h2"]
 http3 = ["http-dynamic-loader/h3"]
-# Crypto backend selection (choose one):
-crypto-ring = ["rcgen/ring"]        # Lighter (~4-5MB binary), ECDSA only, Safari compatible
-crypto-aws = ["rcgen/aws_lc_rs"]    # Heavier (~7-8MB binary), RSA + ECDSA, Safari compatible, required for ACME
 
 # Note: UNIX-specific features like privilege dropping are automatically enabled
 # on Unix-like systems through conditional compilation in the source code
 
 [dependencies]
-# Main rustls library
-rustls = { path = "../rustls", features = ["ring"] }
-
 # ACME functionality
 rustls-acme = { path = "../rustls-acme", optional = true }
 
@@ -43,9 +37,11 @@ lexopt = { workspace = true }
 # HTTP/2 and HTTP/3 via dynamic loading (feature-gated)
 http-dynamic-loader = { path = "../lsb_dynamic_loader/http_dynamic_loader", optional = true }
 
+# LSB OpenSSL runtime loader
+lsb-openssl = { workspace = true }
+
 # Async runtime
 tokio = { version = "1.34", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "time"] }
-tokio-rustls = { path = "../tokio-rustls" }
 
 # Logging
 log = "0.4"
@@ -56,9 +52,9 @@ urlencoding = "2.1"
 
 # Certificate generation and parsing
 rcgen = { path = "../rcgen/rcgen", features = ["pem", "ring", "x509-parser"], default-features = false }
-#rcgen = { workspace = true }
-#rustls-pemfile = { workspace = true }
-rustls-pemfile = { version = "2.2" }
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 # Dependencies not available on Redox
 [target.'cfg(not(target_os = "redox"))'.dependencies]

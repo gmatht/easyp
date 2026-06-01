@@ -25,6 +25,8 @@ ring = ["dep:ring-wrapper", "webpki/ring"]
 redox = ["dep:ring-wrapper"]
 std = ["webpki/std", "pki-types/std", "once_cell/std"]
 zlib = ["dep:zlib-rs"]
+zlib-lsb = ["dep:lsb-zlib"]
+crypto-lsb = ["custom-provider"]
 
 [dependencies]
 aws-lc-rs = { workspace = true, optional = true }
@@ -40,6 +42,7 @@ webpki = { workspace = true }
 pki-types = { workspace = true }
 zeroize = { workspace = true }
 zlib-rs = { workspace = true, optional = true }
+lsb-zlib = { workspace = true, optional = true }
 
 
 [dev-dependencies]

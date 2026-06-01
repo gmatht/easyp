@@ -1,10 +1,7 @@
-[workspace]
-resolver = "2"
-members = [
-    "crates/lsb-loader",
-    "crates/lsb-zlib",
-    "crates/lsb-openssl",
-    "crates/lsb-squeeze-test",
-    "crates/lsb-nix-test",
-    "http_dynamic_loader",
-]
+[package]
+name = "lsb-dynamic-loader-workspace"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Virtual workspace container (members moved to root workspace)"
+

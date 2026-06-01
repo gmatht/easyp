@@ -6,7 +6,7 @@ description = "Runtime-loaded zlib (libz) compression wrapper for LSB compatibil
 license = "MIT"
 
 [dependencies]
-lsb-loader = { path = "../lsb-loader" }
+lsb-loader = { workspace = true }
 thiserror = "1.0"
 
 [lib]

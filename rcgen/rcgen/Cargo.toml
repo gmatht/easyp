@@ -26,7 +26,7 @@ pem = { version = "3.0.2", optional = true }
 pki-types = { package = "rustls-pki-types", version = "1.4.1" }
 ring-wrapper = { workspace = true, optional = true }
 time = { version = "0.3.6", default-features = false }
-x509-parser = { version = "0.18", features = ["verify"], optional = true }
+x509-parser = { version = "0.18", features = ["verify-aws"], optional = true }
 yasna = { version = "0.5.2", features = ["time", "std"] }
 zeroize = { version = "1.2", optional = true }
 

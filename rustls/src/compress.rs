@@ -126,6 +126,62 @@ pub struct DecompressionFailed;
 #[derive(Debug)]
 pub struct CompressionFailed;
 
+#[cfg(feature = "zlib-lsb")]
+mod feat_zlib_lsb {
+    use super::*;
+    use lsb_zlib::Zlib;
+    use std::sync::OnceLock;
+
+    fn zlib() -> &'static Zlib {
+        static Z: OnceLock<Zlib> = OnceLock::new();
+        Z.get_or_init(|| Zlib::load().expect("failed to load system zlib"))
+    }
+
+    pub const ZLIB_DECOMPRESSOR: &dyn CertDecompressor = &LsbZlibDecompressor;
+
+    #[derive(Debug)]
+    struct LsbZlibDecompressor;
+
+    impl CertDecompressor for LsbZlibDecompressor {
+        fn decompress(&self, input: &[u8], output: &mut [u8]) -> Result<(), DecompressionFailed> {
+            let result = zlib().uncompress_vec(input, output.len())
+                .map_err(|_| DecompressionFailed)?;
+            if result.len() != output.len() {
+                return Err(DecompressionFailed);
+            }
+            output.copy_from_slice(&result);
+            Ok(())
+        }
+
+        fn algorithm(&self) -> CertificateCompressionAlgorithm {
+            CertificateCompressionAlgorithm::Zlib
+        }
+    }
+
+    pub const ZLIB_COMPRESSOR: &dyn CertCompressor = &LsbZlibCompressor;
+
+    #[derive(Debug)]
+    struct LsbZlibCompressor;
+
+    impl CertCompressor for LsbZlibCompressor {
+        fn compress(
+            &self,
+            input: Vec<u8>,
+            _level: CompressionLevel,
+        ) -> Result<Vec<u8>, CompressionFailed> {
+            zlib().compress_vec(&input)
+                .map_err(|_| CompressionFailed)
+        }
+
+        fn algorithm(&self) -> CertificateCompressionAlgorithm {
+            CertificateCompressionAlgorithm::Zlib
+        }
+    }
+}
+
+#[cfg(feature = "zlib-lsb")]
+pub use feat_zlib_lsb::{ZLIB_COMPRESSOR, ZLIB_DECOMPRESSOR};
+
 #[cfg(feature = "zlib")]
 mod feat_zlib_rs {
     use zlib_rs::c_api::Z_BEST_COMPRESSION;

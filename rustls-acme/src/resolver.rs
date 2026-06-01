@@ -182,78 +182,26 @@ impl OnDemandCertResolver {
             }
         }
         
-        use rcgen::{CertificateParams, KeyPair, SanType};
+        println!("🔍 Generating self-signed certificate for: {}", identifier);
         
-        println!("🔍 Generating Safari-compatible self-signed certificate for: {}", identifier);
+        // Write cert to a temp location so lsb_openssl can generate it
+        let tmp_cert = format!("/tmp/easyp-acme-{}.pem", identifier);
+        let tmp_key = format!("/tmp/easyp-acme-{}.key", identifier);
         
-        // Handle localhost specially
-        let (main_subject, ip_addr) = if identifier == "localhost" {
-            ("localhost".to_string(), std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
-        } else {
-            // Parse the IP address
-            let ip_addr = identifier.parse::<std::net::IpAddr>()
-                .map_err(|e| AcmeError::Validation(format!("Invalid identifier {}: {}", identifier, e)))?;
-            (identifier.to_string(), ip_addr)
-        };
+        let (cert_der, key_der) = lsb_openssl::certs::generate_self_signed(identifier, &tmp_cert, &tmp_key)
+            .map_err(|e| AcmeError::Validation(format!("OpenSSL cert gen failed: {}", e)))?;
         
-        // Generate key pair - try RSA first, fallback to ECDSA
-        let key_pair = if let Ok(rsa_key) = KeyPair::generate_for(&rcgen::PKCS_RSA_SHA256) {
-            println!("✅ Generated RSA key pair for Safari compatibility");
-            rsa_key
-        } else {
-            println!("⚠️  RSA key generation failed, falling back to ECDSA");
-            KeyPair::generate()
-                .map_err(|e| AcmeError::Validation(format!("Failed to generate key pair: {}", e)))?
-        };
-        
-        // Create certificate parameters with the main subject
-        let mut params = CertificateParams::new(vec![main_subject.clone()])
-            .map_err(|e| AcmeError::Validation(format!("Failed to create certificate params: {}", e)))?;
-        
-        // Add multiple Subject Alternative Names for better compatibility
-        let mut sans = vec![
-            SanType::DnsName(rcgen::string::Ia5String::try_from("localhost").unwrap()),
-            SanType::IpAddress(ip_addr),
-        ];
-        
-        // Add common localhost IPs for better compatibility
-        if identifier != "127.0.0.1" {
-            sans.push(SanType::IpAddress(std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1))));
-        }
-        if identifier != "::1" {
-            sans.push(SanType::IpAddress(std::net::IpAddr::V6(std::net::Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1))));
-        }
-        
-        params.subject_alt_names = sans;
-        
-        // Set additional parameters for Safari compatibility
-        params.distinguished_name = rcgen::DistinguishedName::new();
-        
-        // Set key usage for TLS server authentication
-        params.key_usages = vec![
-            rcgen::KeyUsagePurpose::DigitalSignature,
-            rcgen::KeyUsagePurpose::KeyEncipherment,
-        ];
-        
-        // Set extended key usage for TLS server authentication
-        params.extended_key_usages = vec![
-            rcgen::ExtendedKeyUsagePurpose::ServerAuth,
-        ];
-        
-        // Generate the certificate
-        let cert = params.self_signed(&key_pair)
-            .map_err(|e| AcmeError::Validation(format!("Failed to generate certificate: {}", e)))?;
-        
-        // Convert to DER format
-        let cert_der = cert.der().to_vec();
-        
-        let key_der = key_pair.serialize_der();
-        
-        // Create the CertifiedKey using the correct API
+        // Create the CertifiedKey using the process default crypto provider
+        let provider = rustls::crypto::CryptoProvider::get_default()
+            .or_else(|| {
+                let p = rustls::crypto::CryptoProvider::from_crate_features()?;
+                Some(Box::leak(Box::new(Arc::new(p))))
+            })
+            .expect("No CryptoProvider available — call CryptoProvider::install_default() or enable a rustls feature like 'ring'");
         let certified_key = Arc::new(rustls::sign::CertifiedKey::from_der(
             vec![rustls::pki_types::CertificateDer::from(cert_der)].into(),
             rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(key_der)),
-            &rustls::crypto::ring::default_provider(),
+            provider,
         ).map_err(|e| AcmeError::Validation(format!("Failed to create CertifiedKey: {}", e)))?);
         
         // Cache the certificate
