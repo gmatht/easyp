@@ -14,14 +14,15 @@ use std::println;
 
 use crate::types::*;
 
-use tokio::sync::{RwLock, Mutex};
+use async_lock::{RwLock, Mutex};
+use event_listener::Event;
 
 /// ACME client for certificate management
 pub struct AcmeClient {
     config: AcmeConfig,
     certificate_cache: Arc<RwLock<HashMap<String, CachedCertificate>>>,
     challenge_storage: Arc<RwLock<HashMap<String, ChallengeData>>>,
-    certificate_requests: Arc<Mutex<HashMap<String, Arc<tokio::sync::Notify>>>>,
+    certificate_requests: Arc<Mutex<HashMap<String, Arc<Event>>>>,
 }
 
 impl AcmeClient {
@@ -137,8 +138,7 @@ impl AcmeClient {
                 println!("⏳ Certificate request already in progress for domain: {}, waiting...", domain);
                 Some(existing_notify.clone())
             } else {
-                // Create a new notification for this domain
-                let notify = Arc::new(tokio::sync::Notify::new());
+                let notify = Arc::new(Event::new());
                 requests.insert(domain.to_string(), notify.clone());
                 None
             }
@@ -146,7 +146,7 @@ impl AcmeClient {
 
         // If another request is in progress, wait for it
         if let Some(notify) = should_wait {
-            notify.notified().await;
+            notify.listen().await;
             
             // Check cache again after waiting
             let cache = self.certificate_cache.read().await;
@@ -200,7 +200,7 @@ impl AcmeClient {
             let mut requests = self.certificate_requests.lock().await;
             if let Some(notify) = requests.remove(domain) {
                 println!("🔔 Notifying waiting requests for domain: {}", domain);
-                notify.notify_waiters();
+                notify.notify(usize::MAX);
             }
         }
 

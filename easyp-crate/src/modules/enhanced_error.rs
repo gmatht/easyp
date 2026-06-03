@@ -120,14 +120,19 @@ pub mod file_ops {
 /// Enhanced network operations with detailed error reporting
 pub mod network_ops {
     use super::*;
-    use tokio::net::TcpListener;
+    use async_io::Async;
+    use std::net::TcpListener;
 
     /// Enhanced version of TcpListener::bind with detailed error reporting
-    pub async fn bind_tcp_listener(addr: &str) -> Result<TcpListener, EnhancedError> {
-        TcpListener::bind(addr).await
-            .map_err(|e| network_operation_error("bind_tcp_listener", addr, Box::new(e)))
+    pub async fn bind_tcp_listener(addr: &str) -> Result<Async<TcpListener>, EnhancedError> {
+        let listener = TcpListener::bind(addr)
+            .map_err(|e| network_operation_error("bind_tcp_listener", addr, Box::new(e)))?;
+        listener.set_nonblocking(true)
+            .map_err(|e| network_operation_error("bind_tcp_listener (set_nonblocking)", addr, Box::new(e)))?;
+        Async::new(listener)
+            .map_err(|e| network_operation_error("bind_tcp_listener (async)", addr, Box::new(e)))
     }
-}
+    }
 
 /// Macro to wrap any Result with enhanced error reporting
 #[macro_export]

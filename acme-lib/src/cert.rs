@@ -2,10 +2,8 @@ use rustls_pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
 
 use crate::Result;
 
-/// Make an RSA private key (from which we can derive a public key).
-///
-/// This library does not check the number of bits used to create the key pair.
-/// For Let's Encrypt, the bits must be between 2048 and 4096.
+/// Make an RSA private key (only available in test builds).
+#[cfg(test)]
 pub fn create_rsa_key(bits: u32) -> PrivateKeyDer<'static> {
     use rsa::{RsaPrivateKey, pkcs8::EncodePrivateKey};
 

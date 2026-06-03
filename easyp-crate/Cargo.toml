@@ -40,8 +40,11 @@ http-dynamic-loader = { path = "../lsb_dynamic_loader/http_dynamic_loader", opti
 # LSB OpenSSL runtime loader
 lsb-openssl = { workspace = true }
 
-# Async runtime
-tokio = { version = "1.34", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "time"] }
+# Async runtime (smol-based)
+smol = { workspace = true }
+async-net = { workspace = true }
+async-io = { workspace = true }
+futures = { workspace = true }
 
 # Logging
 log = "0.4"
@@ -50,8 +53,7 @@ urlencoding = "2.1"
 
 # Serialization for stats - removed, using TSV format instead
 
-# Certificate generation and parsing
-rcgen = { path = "../rcgen/rcgen", features = ["pem", "ring", "x509-parser"], default-features = false }
+
 
 [dev-dependencies]
 tempfile = { workspace = true }

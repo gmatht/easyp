@@ -14,9 +14,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::os::unix::io::AsRawFd;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::process::Command as TokioCommand;
-use tokio::time::{timeout as tokio_timeout, Duration as TokioDuration};
+use futures::io::{AsyncReadExt, AsyncWriteExt};
 use std::process::Command as StdCommand;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -466,8 +464,8 @@ fn openssl_global() -> Option<&'static lsb_openssl::Openssl> {
 
 /// On-demand HTTPS server
 struct OnDemandHttpsServer {
-    http_listener: tokio::net::TcpListener,  // Port 80 for ACME challenges
-    https_listener: tokio::net::TcpListener, // Port 443 for HTTPS traffic
+    http_listener: async_io::Async<std::net::TcpListener>,  // Port 80 for ACME challenges
+    https_listener: async_io::Async<std::net::TcpListener>, // Port 443 for HTTPS traffic
     sni_fallback: Arc<SniFallback>,
     args: Args,
     http_challenges: Arc<Mutex<BTreeMap<String, String>>>, // token -> key_authorization
@@ -484,7 +482,7 @@ impl OnDemandHttpsServer {
     /// Create a new on-demand HTTPS server
     async fn new(args: Args, stats_collector: Arc<HourlyStatsCollector>) -> Result<Self, Box<dyn std::error::Error>> {
         // Check if port 80 is available for ACME challenges
-        let port_80_available = is_port_80_available().await;
+        let port_80_available = is_port_80_available();
 
         // Apply --over-9000 option to port numbers, but only if port 80 is not available
         let http_port = if port_80_available {
@@ -649,8 +647,8 @@ impl OnDemandHttpsServer {
                    println!("ACME lib directory created: {}", acme_lib_dir);
                }
 
-               // Check if port 80 is available for ACME challenges
-               let port_80_available = is_port_80_available().await;
+                // Check if port 80 is available for ACME challenges
+                let port_80_available = is_port_80_available();
 
                if !port_80_available {
                    println!("⚠️  Port 80 is not available. ACME certificate generation will not be possible.");
@@ -836,7 +834,7 @@ impl OnDemandHttpsServer {
             let stats_collector = self.stats_collector.clone();
             let security_config = self.secure_file_server.config().clone();
             let cache_dir = self.args.cache_dir.clone();
-            tokio::spawn(async move {
+            smol::spawn(async move {
                 let cert_file = format!("{}/fullchain.pem", cache_dir);
                 let key_file = format!("{}/privkey.pem", cache_dir);
                 match http3_handler::Http3Handler::new(
@@ -856,41 +854,39 @@ impl OnDemandHttpsServer {
                         eprintln!("Failed to initialize HTTP/3: {}", e);
                     }
                 }
-            });
+            }).detach();
         }
 
         println!("Starting main server loop - listening on HTTP port {} and HTTPS port {}", http_port, final_https_port);
         loop {
-        tokio::select! {
-                // Accept HTTP connections (port 80) for ACME challenges
-                result = self.http_listener.accept() => {
+            use futures::FutureExt;
+
+            let http_fut = self.http_listener.accept().fuse();
+            let https_fut = self.https_listener.accept().fuse();
+            futures::pin_mut!(http_fut, https_fut);
+
+            futures::select! {
+                result = http_fut => {
                     match result {
                         Ok((stream, addr)) => {
                             println!("🔍 New HTTP connection from {} (ACME challenge)", addr);
 
-                            // Handle HTTP connection for ACME challenges and file serving
                             #[cfg(feature = "acme")]
                             let acme_client = self.acme_client.clone();
                             let http_challenges = self.http_challenges.clone();
                             let secure_file_server = self.secure_file_server.clone();
                             let extension_registry = self.extension_registry.clone();
 
-                    tokio::task::spawn_blocking(move || {
-                        let rt = tokio::runtime::Handle::current();
-                        rt.block_on(async {
-                            #[cfg(feature = "acme")]
-                            let result = Self::handle_http_connection(stream, acme_client, http_challenges, secure_file_server, extension_registry).await;
-                            #[cfg(not(feature = "acme"))]
-                            let result = Self::handle_http_connection(stream, http_challenges, secure_file_server, extension_registry).await;
-                            match result {
-                                Ok(()) => {},
-                                Err(e) => {
+                            smol::spawn(async move {
+                                #[cfg(feature = "acme")]
+                                let result = Self::handle_http_connection(stream, acme_client, http_challenges, secure_file_server, extension_registry).await;
+                                #[cfg(not(feature = "acme"))]
+                                let result = Self::handle_http_connection(stream, http_challenges, secure_file_server, extension_registry).await;
+                                if let Err(e) = result {
                                     let error_msg = format!("{}", e);
                                     eprintln!("HTTP connection error: {}", error_msg);
                                 }
-                            }
-                        })
-                    });
+                            }).detach();
                         }
                         Err(e) => {
                             eprintln!("❌ HTTP accept error: {}", e);
@@ -898,14 +894,11 @@ impl OnDemandHttpsServer {
                     }
                 }
 
-                // Accept HTTPS connections (port 443) for HTTPS traffic
-                result = self.https_listener.accept() => {
-                    println!("🔍 HTTPS accept() returned: {:?}", result);
+                result = https_fut => {
                     match result {
                         Ok((stream, addr)) => {
                             println!("🔍 New HTTPS connection from {}", addr);
 
-                            // Handle HTTPS connection
                             let sni_fallback = self.sni_fallback.clone();
                             let args = self.args.clone();
                             let http_challenges = self.http_challenges.clone();
@@ -913,27 +906,25 @@ impl OnDemandHttpsServer {
                             let secure_file_server = self.secure_file_server.clone();
                             let stats_collector = self.stats_collector.clone();
 
-                            tokio::spawn(async move {
+                            smol::spawn(async move {
                                 if let Err(e) = Self::handle_connection_static(stream, sni_fallback, args, extension_registry, http_challenges, secure_file_server, stats_collector).await {
                                     eprintln!("HTTPS connection error: {}", e);
                                 }
-                            });
+                            }).detach();
                         }
                         Err(e) => {
                             eprintln!("❌ HTTPS accept error: {}", e);
                         }
                     }
+                }
+                complete => {},
             }
-        }
-
-            // Small delay to prevent busy waiting
-            std::thread::sleep(Duration::from_millis(10));
         }
     }
 
     /// Handle HTTP connection (port 80) for ACME challenges and file serving
     async fn handle_http_connection(
-        mut stream: tokio::net::TcpStream,
+        mut stream: async_io::Async<std::net::TcpStream>,
         #[cfg(feature = "acme")]
         acme_client: Option<Arc<AcmeClient>>,
         http_challenges: Arc<Mutex<BTreeMap<String, String>>>,
@@ -1069,26 +1060,21 @@ impl OnDemandHttpsServer {
             }
 
             // Handle bin extension request
-            let response = {
+            let internal_result = {
                 let registry = extension_registry.lock().unwrap();
-                // First, try internal bin handlers (compiled extensions)
-                match registry.handle_bin_request(bin_path, "GET", query_string, &headers) {
-                    Ok(resp) => Ok(resp),
-                    Err(_) => {
-                        // If internal handler not found, try external CGI script under document_root/cgi-bin
-                        let document_root = secure_file_server.config().document_root.clone();
-                        let mut script_path = document_root.join("cgi-bin");
-                        // Trim leading slash
-                        let clean = bin_path.trim_start_matches('/');
-                        script_path = script_path.join(clean.trim_start_matches("cgi-bin/"));
+                registry.handle_bin_request(bin_path, "GET", query_string, &headers)
+            };
+            let response = match internal_result {
+                Ok(resp) => Ok(resp),
+                Err(_) => {
+                    let document_root = secure_file_server.config().document_root.clone();
+                    let mut script_path = document_root.join("cgi-bin");
+                    let clean = bin_path.trim_start_matches('/');
+                    script_path = script_path.join(clean.trim_start_matches("cgi-bin/"));
 
-                        // Synchronously call into async CGI executor
-                        match tokio::runtime::Handle::current().block_on(async {
-                            cgi_handler::execute_cgi_script(&script_path, &crate::cgi_env::CgiEnv::from_request("GET", bin_path, "localhost", query_string, &headers), None, 5).await
-                        }) {
-                            Ok(bytes) => Ok(String::from_utf8_lossy(&bytes).to_string()),
-                            Err(e) => Err(e),
-                        }
+                    match cgi_handler::execute_cgi_script(&script_path, &crate::cgi_env::CgiEnv::from_request("GET", bin_path, "localhost", query_string, &headers), None, 5).await {
+                        Ok(bytes) => Ok(String::from_utf8_lossy(&bytes).to_string()),
+                        Err(e) => Err(e),
                     }
                 }
             };
@@ -1207,7 +1193,7 @@ impl OnDemandHttpsServer {
             &request,
             &http_version,
             should_keep_alive
-        );
+        ).map_err(|e| format!("{}", e));
         match serve_result {
             Ok(Some(response_bytes)) => {
                 // This is a complete HTTP response (with caching headers)
@@ -1324,10 +1310,8 @@ impl OnDemandHttpsServer {
         stream.flush().await?;
                 }
             }
-            Err(e) => {
-                // Security error or other error - check if this is a root request first
-                let error_msg = format!("{}", e);
-                println!("Request denied for {}: {}", request_path, error_msg);
+            Err(error_msg) => {
+                println!("Request denied for {}: {}", request_path, &error_msg);
                 if secure_file_server.is_root_request(request_path) {
                     // Serve default informational page even for security errors on root
                     let default_page = secure_file_server.generate_default_page("localhost");
@@ -1368,7 +1352,7 @@ impl OnDemandHttpsServer {
 
     /// Handle a single HTTPS connection (static version for threading)
     async fn handle_connection_static(
-        stream: tokio::net::TcpStream,
+        stream: async_io::Async<std::net::TcpStream>,
         sni_fallback: Arc<SniFallback>,
         args: Args,
         extension_registry: Arc<Mutex<ExtensionRegistry>>,
@@ -1392,7 +1376,7 @@ impl OnDemandHttpsServer {
 
     /// Handle HTTPS connection using libssl (OpenSSL loaded at runtime)
     async fn handle_https_connection_async(
-        stream: tokio::net::TcpStream,
+        stream: async_io::Async<std::net::TcpStream>,
         sni_fallback: Arc<SniFallback>,
         args: Args,
         extension_registry: Arc<Mutex<ExtensionRegistry>>,
@@ -1407,8 +1391,7 @@ impl OnDemandHttpsServer {
         let http2_enabled = args.http2_enabled;
         let fd = stream.as_raw_fd();
 
-        let (ssl_conn, alpn) = {
-            let result: Result<(lsb_openssl::SslConn, Option<Vec<u8>>), Box<dyn std::error::Error + Send + Sync>> = tokio::task::spawn_blocking(move || {
+        let (ssl_conn, alpn): (lsb_openssl::SslConn, Option<Vec<u8>>) = smol::unblock(move || -> Result<_, Box<dyn std::error::Error + Send + Sync>> {
                 // Temporarily set fd to blocking for the TLS handshake
                 unsafe {
                     let flags = libc::fcntl(fd, libc::F_GETFL, 0);
@@ -1443,9 +1426,7 @@ impl OnDemandHttpsServer {
                 }
 
                 Ok((ssl, alpn))
-            }).await.map_err(|e| format!("join: {}", e))?;
-            result?
-        };
+            }).await?;
 
         let mut tls_stream = openssl_stream::TlsStream::new(stream, ssl_conn);
         println!("TLS handshake completed (libssl)");
@@ -1491,8 +1472,8 @@ impl OnDemandHttpsServer {
             if !should_keep_alive {
                 println!("Closing HTTPS connection after {} requests (version: {})",
                     request_count, http_version);
-                use tokio::io::AsyncWriteExt;
-                let _ = tls_stream.shutdown().await;
+                use futures::io::AsyncWriteExt;
+                let _ = tls_stream.close().await;
                 break;
             }
 
@@ -1504,14 +1485,14 @@ impl OnDemandHttpsServer {
     }
 
     /// Process a single HTTPS request using async I/O
-    async fn process_https_request_async<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
+    async fn process_https_request_async<T: futures::io::AsyncRead + futures::io::AsyncWrite + Unpin>(
         tls_stream: &mut T,
         extension_registry: &Arc<Mutex<ExtensionRegistry>>,
         http_challenges: &Arc<Mutex<BTreeMap<String, String>>>,
         secure_file_server: &SecureFileServer,
         stats_collector: &Arc<HourlyStatsCollector>,
     ) -> Result<(HttpVersion, Option<String>), Box<dyn std::error::Error + Send + Sync>> {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use futures::io::{AsyncReadExt, AsyncWriteExt};
 
         // Read the request
         let mut buffer = [0; 4096];
@@ -1814,7 +1795,7 @@ impl OnDemandHttpsServer {
 
     /// Handle HTTP-01 ACME challenge over HTTP (port 80)
     async fn handle_acme_challenge_http(
-        mut stream: tokio::net::TcpStream,
+        mut stream: async_io::Async<std::net::TcpStream>,
         request_line: &str,
         acme_client: &Option<Arc<AcmeClient>>,
         http_challenges: &Arc<Mutex<BTreeMap<String, String>>>,
@@ -1866,8 +1847,7 @@ impl OnDemandHttpsServer {
     fn get_challenge_response(&self, token: &str) -> Option<String> {
         // Try to get from ACME client if available
         if let Some(acme_client) = &self.acme_client {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            if let Some(response) = rt.block_on(acme_client.get_challenge_response(token)) {
+            if let Some(response) = futures::executor::block_on(acme_client.get_challenge_response(token)) {
                 return Some(response);
             }
         }
@@ -1895,12 +1875,7 @@ impl OnDemandHttpsServer {
     ) -> Option<String> {
         // Try to get from ACME client if available
         if let Some(acme_client) = acme_client {
-            // Use block_in_place to handle the async call within the existing runtime
-            if let Some(response) = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::try_current()
-                    .unwrap()
-                    .block_on(acme_client.get_challenge_response(token))
-            }) {
+            if let Some(response) = futures::executor::block_on(acme_client.get_challenge_response(token)) {
                 return Some(response);
             }
         }
@@ -1928,12 +1903,7 @@ impl OnDemandHttpsServer {
     ) -> Option<String> {
         // Try to get from ACME client if available
         if let Some(acme_client) = acme_client {
-            // Use block_in_place to handle the async call within the existing runtime
-            if let Some(response) = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::try_current()
-                    .unwrap()
-                    .block_on(acme_client.get_challenge_response(token))
-            }) {
+            if let Some(response) = futures::executor::block_on(acme_client.get_challenge_response(token)) {
                 return Some(response);
             }
         }
@@ -2235,10 +2205,8 @@ fn is_running_as_root() -> bool {
 }
 
 /// Check if port 80 is available for ACME challenges
-async fn is_port_80_available() -> bool {
-    use tokio::net::TcpListener;
-
-    match TcpListener::bind("0.0.0.0:80").await {
+fn is_port_80_available() -> bool {
+    match std::net::TcpListener::bind("0.0.0.0:80") {
         Ok(_) => {
             // Port 80 is available, close the listener
             true
@@ -2590,8 +2558,8 @@ fn save_admin_keys(admin_keys: &std::collections::HashSet<String>) -> Result<(),
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    smol::block_on(async {
     debug_extensions_enabled();
         println!("🚀 easyp HTTPS Server starting - Debug version with enhanced ACME integration");
     let args = Args::parse().unwrap_or_else(|e| {
@@ -2681,9 +2649,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Start background stats collection task
     let stats_collector_clone = stats_collector.clone();
-    tokio::spawn(async move {
+    smol::spawn(async move {
         start_stats_collection_task(stats_collector_clone).await;
-    });
+    }).detach();
 
     // Create and run server
     println!("DEBUG: Attempting to create OnDemandHttpsServer");
@@ -2693,4 +2661,5 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     server.run().await?;
 
     Ok(())
+    })
 }

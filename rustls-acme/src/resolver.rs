@@ -10,7 +10,7 @@ use std::boxed::Box;
 use std::vec;
 use std::println;
 
-use tokio::sync::RwLock;
+use async_lock::RwLock;
 
 use crate::types::*;
 use crate::client::AcmeClient;
@@ -222,26 +222,8 @@ impl OnDemandCertResolver {
         // This is a reasonable fallback since we can't determine the exact IP from the ClientHello
         let fallback_ip = "localhost";
         
-        // Create a new tokio runtime for this call
-        let rt = match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle,
-            Err(_) => {
-                // If we're not in a tokio context, create a new runtime
-                match tokio::runtime::Runtime::new() {
-                    Ok(rt) => rt.handle().clone(),
-                    Err(e) => {
-                        println!("❌ Failed to create tokio runtime: {}", e);
-                        return Err(rustls::Error::NoSuitableCertificate);
-                    }
-                }
-            }
-        };
-
-        // Use block_in_place to handle the async call
-        let result = tokio::task::block_in_place(|| {
-            rt.block_on(async {
-                self.generate_self_signed_certificate(fallback_ip).await
-            })
+        let result = futures::executor::block_on(async {
+            self.generate_self_signed_certificate(fallback_ip).await
         });
 
         match result {
@@ -277,26 +259,8 @@ impl OnDemandCertResolver {
     fn resolve_for_localhost(&self, client_hello: &rustls::server::ClientHello<'_>) -> Result<rustls::sign::CertifiedSigner, rustls::Error> {
         println!("🔍 Resolving certificate for localhost connection");
         
-        // Create a new tokio runtime for this call
-        let rt = match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle,
-            Err(_) => {
-                // If we're not in a tokio context, create a new runtime
-                match tokio::runtime::Runtime::new() {
-                    Ok(rt) => rt.handle().clone(),
-                    Err(e) => {
-                        println!("❌ Failed to create tokio runtime: {}", e);
-                        return Err(rustls::Error::NoSuitableCertificate);
-                    }
-                }
-            }
-        };
-
-        // Use block_in_place to handle the async call
-        let result = tokio::task::block_in_place(|| {
-            rt.block_on(async {
-                self.generate_self_signed_certificate("localhost").await
-            })
+        let result = futures::executor::block_on(async {
+            self.generate_self_signed_certificate("localhost").await
         });
 
         match result {
@@ -349,31 +313,10 @@ impl ResolvesServerCert for OnDemandCertResolver {
         }
 
         println!("🔍 Resolver: About to call get_or_create_certificate for domain: {:?}", server_name);
-        
-        // We need to handle the async call synchronously
-        // Create a new tokio runtime for this call
-        let rt = match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle,
-            Err(_) => {
-                // If we're not in a tokio context, create a new runtime
-                match tokio::runtime::Runtime::new() {
-                    Ok(rt) => rt.handle().clone(),
-                    Err(e) => {
-                        println!("❌ Failed to create tokio runtime: {}", e);
-                        return Err(rustls::Error::NoSuitableCertificate);
-                    }
-                }
-            }
-        };
 
-        // Use block_in_place to handle the async call
-        println!("🔍 Resolver: About to call block_in_place for certificate resolution");
-        let result = tokio::task::block_in_place(|| {
-            println!("🔍 Resolver: Inside block_in_place, calling get_or_create_certificate");
-            rt.block_on(async {
-                println!("🔍 Resolver: Inside async block, calling get_or_create_certificate");
-                self.get_or_create_certificate(server_name.as_ref()).await
-            })
+        let result = futures::executor::block_on(async {
+            println!("🔍 Resolver: Inside async block, calling get_or_create_certificate");
+            self.get_or_create_certificate(server_name.as_ref()).await
         });
         println!("🔍 Resolver: Certificate resolution result: {:?}", result.is_ok());
 

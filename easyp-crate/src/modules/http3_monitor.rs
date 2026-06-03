@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::time::interval;
+use smol::Timer;
 
 /// HTTP/3 monitoring metrics for tracking connection health and UDP firewall issues
 #[cfg(feature = "http3")]
@@ -28,7 +28,7 @@ pub struct Http3Monitor {
     alt_svc_without_http3: AtomicU64,
 
     /// Track clients by IP to detect patterns
-    client_attempts: Arc<tokio::sync::RwLock<HashMap<String, ClientStats>>>,
+    client_attempts: Arc<async_lock::RwLock<HashMap<String, ClientStats>>>,
 
     /// Start time for calculating rates
     start_time: Instant,
@@ -69,7 +69,7 @@ impl Http3Monitor {
             http3_failures: AtomicU64::new(0),
             connection_timeouts: AtomicU64::new(0),
             alt_svc_without_http3: AtomicU64::new(0),
-            client_attempts: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            client_attempts: Arc::new(async_lock::RwLock::new(HashMap::new())),
             start_time: Instant::now(),
         }
     }
@@ -79,7 +79,7 @@ impl Http3Monitor {
         self.alt_svc_sent.fetch_add(1, Ordering::Relaxed);
 
         // Update client stats
-        tokio::spawn({
+        smol::spawn({
             let client_attempts = Arc::clone(&self.client_attempts);
             let client_ip = client_ip.to_string();
             async move {
@@ -102,7 +102,7 @@ impl Http3Monitor {
         self.http3_connections.fetch_add(1, Ordering::Relaxed);
 
         // Update client stats
-        tokio::spawn({
+        smol::spawn({
             let client_attempts = Arc::clone(&self.client_attempts);
             let client_ip = client_ip.to_string();
             async move {
@@ -130,7 +130,7 @@ impl Http3Monitor {
         }
 
         // Update client stats
-        tokio::spawn({
+        smol::spawn({
             let client_attempts = Arc::clone(&self.client_attempts);
             let client_ip = client_ip.to_string();
             async move {
@@ -241,12 +241,12 @@ impl Http3Monitor {
 
     /// Start periodic monitoring and cleanup
     pub async fn start_monitoring(&self) {
-        let mut interval = interval(Duration::from_secs(60)); // Check every minute
         let client_attempts = Arc::clone(&self.client_attempts);
 
-        tokio::spawn(async move {
+        smol::spawn(async move {
+            let mut timer = smol::Timer::interval(Duration::from_secs(60));
             loop {
-                interval.tick().await;
+                (&mut timer).await;
 
                 // Clean up old client entries (older than 1 hour)
                 let cutoff = Instant::now() - Duration::from_secs(3600);
@@ -350,20 +350,24 @@ mod tests {
     use super::*;
 
     #[cfg(feature = "http3")]
-    #[tokio::test]
-    async fn test_monitor_creation() {
+    #[test]
+    fn test_monitor_creation() {
+        smol::block_on(async {
         let monitor = Http3Monitor::new();
         let stats = monitor.get_stats();
         assert_eq!(stats.alt_svc_sent, 0);
         assert_eq!(stats.http3_connections, 0);
+        })
     }
 
     #[cfg(feature = "http3")]
-    #[tokio::test]
-    async fn test_firewall_detection() {
+    #[test]
+    fn test_firewall_detection() {
+        smol::block_on(async {
         let monitor = Http3Monitor::new();
         let detection = monitor.detect_firewall_issues().await;
         assert_eq!(detection.udp_blocked_probability, 0.0);
+        })
     }
 
     #[test]

@@ -25,7 +25,7 @@ mod inner {
     unsafe impl Sync for QuicConn {}
 
     pub struct Http3Handler {
-        socket: tokio::net::UdpSocket,
+        socket: async_io::Async<std::net::UdpSocket>,
         #[allow(dead_code)]
         conns: HashMap<Vec<u8>, QuicConn>,
         #[allow(dead_code)]
@@ -55,7 +55,7 @@ mod inner {
         ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
             let sock = std::net::UdpSocket::bind(bind_addr)?;
             sock.set_nonblocking(true)?;
-            let socket = tokio::net::UdpSocket::from_std(sock)?;
+            let socket = async_io::Async::new(sock)?;
 
             let ngtcp2_lib = http_dynamic_loader::h3::quic::Ngtcp2Lib::load()
                 .map_err(|e| format!("ngtcp2: {}", e))?;

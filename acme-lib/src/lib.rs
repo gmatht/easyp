@@ -169,6 +169,8 @@ pub mod persist;
 mod test;
 
 pub use crate::acc::{Account, RevocationReason};
-pub use crate::cert::{create_p256_key, create_p384_key, create_rsa_key, Certificate};
+#[cfg(test)]
+pub use crate::cert::create_rsa_key;
+pub use crate::cert::{create_p256_key, create_p384_key, Certificate};
 pub use crate::dir::{Directory, DirectoryUrl};
 pub use crate::error::{Error, Result};

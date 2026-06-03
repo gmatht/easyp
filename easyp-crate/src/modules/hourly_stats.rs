@@ -368,10 +368,10 @@ impl HourlyStatsCollector {
 
 /// Background task that collects stats every hour
 pub async fn start_stats_collection_task(collector: Arc<HourlyStatsCollector>) {
-    let mut interval = tokio::time::interval(Duration::from_secs(3600)); // Every hour
+    let mut timer = smol::Timer::interval(Duration::from_secs(3600)); // Every hour
 
     loop {
-        interval.tick().await;
+        (&mut timer).await;
 
         if let Err(e) = collector.collect_current_stats() {
             eprintln!("⚠️  Failed to collect hourly stats: {}", e);
