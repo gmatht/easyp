@@ -56,18 +56,6 @@ pub fn network_operation_error(
     }
 }
 
-/// Helper function to create enhanced error for general operations
-pub fn operation_error(
-    operation: &str,
-    error: Box<dyn Error + Send + Sync>,
-) -> EnhancedError {
-    EnhancedError {
-        operation: operation.to_string(),
-        path: None,
-        original_error: error,
-    }
-}
-
 /// Enhanced file operations with detailed error reporting
 pub mod file_ops {
     use super::*;
@@ -92,29 +80,12 @@ pub mod file_ops {
             .map_err(|e| file_operation_error("read_to_string", &path, e))
     }
 
-    /// Enhanced version of std::fs::metadata with detailed error reporting
-    pub fn metadata<P: AsRef<Path>>(path: P) -> Result<fs::Metadata, EnhancedError> {
-        fs::metadata(&path)
-            .map_err(|e| file_operation_error("metadata", &path, e))
-    }
-
-    /// Enhanced version of std::fs::set_permissions with detailed error reporting
-    pub fn set_permissions<P: AsRef<Path>>(path: P, perm: fs::Permissions) -> Result<(), EnhancedError> {
-        fs::set_permissions(&path, perm)
-            .map_err(|e| file_operation_error("set_permissions", &path, e))
-    }
-
     /// Enhanced version of std::fs::read_dir with detailed error reporting
     pub fn read_dir<P: AsRef<Path>>(path: P) -> Result<fs::ReadDir, EnhancedError> {
         fs::read_dir(&path)
             .map_err(|e| file_operation_error("read_dir", &path, e))
     }
 
-    /// Enhanced version of std::fs::rename with detailed error reporting
-    pub fn rename<P: AsRef<Path>, Q: AsRef<Path>>(from: P, to: Q) -> Result<(), EnhancedError> {
-        fs::rename(&from, &to)
-            .map_err(|e| file_operation_error("rename", &from, e))
-    }
 }
 
 /// Enhanced network operations with detailed error reporting

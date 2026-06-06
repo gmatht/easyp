@@ -575,8 +575,3 @@ pub fn handle_comment_admin_request(
     Err("Method not allowed".to_string())
 }
 
-// Get admin paths - always return a pattern that can be checked dynamically
-pub fn get_comment_admin_paths() -> Vec<String> {
-    // Return patterns that match comment admin requests and done pages
-    vec!["/comment_".to_string()]
-}

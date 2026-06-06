@@ -1,8 +1,7 @@
 // upload.admin.rs - Admin panel for file uploads
 // Handles file upload interface and admin panel functionality
 
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 
@@ -430,10 +429,5 @@ pub fn handle_upload_admin_request(
     }
 
     Err("Method not allowed".to_string())
-}
-
-// Get admin paths
-pub fn get_upload_admin_paths() -> Vec<String> {
-    vec!["/upload_".to_string()]
 }
 

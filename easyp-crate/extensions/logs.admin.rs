@@ -6,6 +6,7 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
+use futures::channel::mpsc::{self, UnboundedSender, UnboundedReceiver};
 
 // Import file logger to get the log file path
 #[path = "../src/modules/file_logger.rs"]
@@ -112,6 +113,34 @@ fn get_log_storage() -> &'static Arc<Mutex<LogStorage>> {
     LOG_STORAGE.get_or_init(|| Arc::new(Mutex::new(LogStorage::new(10000))))
 }
 
+// SSE broadcast: subscribers get log entries pushed in real-time
+static LOG_SUBSCRIBERS: OnceLock<Arc<Mutex<Vec<UnboundedSender<String>>>>> = OnceLock::new();
+
+fn get_subscribers() -> &'static Arc<Mutex<Vec<UnboundedSender<String>>>> {
+    LOG_SUBSCRIBERS.get_or_init(|| Arc::new(Mutex::new(Vec::new())))
+}
+
+/// Subscribe to real-time log entry stream. Returns a receiver that
+/// receives JSON-encoded log entries as they are captured.
+pub fn subscribe_to_log_stream() -> UnboundedReceiver<String> {
+    let (tx, rx) = mpsc::unbounded();
+    get_subscribers().lock().unwrap().push(tx);
+    rx
+}
+
+fn broadcast_log_entry(level: &str, message: &str, source: &str) {
+    let timestamp = get_current_timestamp();
+    let entry_json = format!(
+        r#"{{"timestamp":"{}","level":"{}","message":"{}","source":"{}"}}"#,
+        timestamp.replace('"', "\\\""),
+        level,
+        message.replace('"', "\\\"").replace('\n', "\\n"),
+        source.replace('"', "\\\"")
+    );
+    let mut subscribers = get_subscribers().lock().unwrap();
+    subscribers.retain(|tx| tx.unbounded_send(entry_json.clone()).is_ok());
+}
+
 // Custom logger that captures logs
 pub struct LogCaptureLogger {
     level: log::Level,
@@ -136,8 +165,11 @@ impl log::Log for LogCaptureLogger {
 
             // Add to storage
             if let Ok(mut storage) = get_log_storage().lock() {
-                storage.add_entry(level, message, source);
+                storage.add_entry(level.clone(), message.clone(), source.clone());
             }
+
+            // Broadcast to SSE subscribers
+            broadcast_log_entry(&level, &message, &source);
 
             // Also print to console
             println!("{}: {}", record.level(), record.args());
@@ -152,6 +184,7 @@ pub fn add_log_entry(level: &str, message: &str, source: &str) {
     if let Ok(mut storage) = get_log_storage().lock() {
         storage.add_entry(level.to_string(), message.to_string(), source.to_string());
     }
+    broadcast_log_entry(level, message, source);
 }
 
 // Function to read logs from log files
@@ -333,7 +366,6 @@ fn generate_logs_panel(admin_key: &str, filter: Option<&str>, level_filter: Opti
     html.push_str("<head>\n");
     html.push_str("<title>Server Logs</title>\n");
     html.push_str("<meta charset=\"UTF-8\">\n");
-    html.push_str("<meta http-equiv=\"refresh\" content=\"10\">\n");
     html.push_str("<style>\n");
     html.push_str("body { font-family: 'Courier New', monospace; margin: 0; background-color: #1e1e1e; color: #d4d4d4; }\n");
     html.push_str(".container { max-width: 1400px; margin: 0 auto; padding: 20px; }\n");
@@ -362,7 +394,6 @@ fn generate_logs_panel(admin_key: &str, filter: Option<&str>, level_filter: Opti
     html.push_str(".stat-item { color: #cccccc; font-size: 0.9em; }\n");
     html.push_str(".stat-value { color: #569cd6; font-weight: bold; }\n");
     html.push_str(".no-logs { text-align: center; padding: 40px; color: #808080; font-style: italic; }\n");
-    html.push_str(".refresh-info { text-align: center; color: #808080; font-size: 0.8em; margin-top: 15px; }\n");
     html.push_str("</style>\n");
     html.push_str("</head>\n");
     html.push_str("<body>\n");
@@ -432,10 +463,10 @@ fn generate_logs_panel(admin_key: &str, filter: Option<&str>, level_filter: Opti
     let info_count = all_unfiltered_entries.iter().filter(|e| e.level == "INFO").count();
 
     html.push_str("<div class=\"stats\">\n");
-    html.push_str(&format!("<div class=\"stat-item\">Total Logs: <span class=\"stat-value\">{}</span></div>\n", total_entries));
-    html.push_str(&format!("<div class=\"stat-item\">Errors: <span class=\"stat-value\" style=\"color: #f44747;\">{}</span></div>\n", error_count));
-    html.push_str(&format!("<div class=\"stat-item\">Warnings: <span class=\"stat-value\" style=\"color: #ffcc02;\">{}</span></div>\n", warn_count));
-    html.push_str(&format!("<div class=\"stat-item\">Info: <span class=\"stat-value\" style=\"color: #4ec9b0;\">{}</span></div>\n", info_count));
+    html.push_str(&format!("<div class=\"stat-item\">Total Logs: <span class=\"stat-value\" id=\"stat-total\">{}</span></div>\n", total_entries));
+    html.push_str(&format!("<div class=\"stat-item\">Errors: <span class=\"stat-value\" id=\"stat-errors\" style=\"color: #f44747;\">{}</span></div>\n", error_count));
+    html.push_str(&format!("<div class=\"stat-item\">Warnings: <span class=\"stat-value\" id=\"stat-warnings\" style=\"color: #ffcc02;\">{}</span></div>\n", warn_count));
+    html.push_str(&format!("<div class=\"stat-item\">Info: <span class=\"stat-value\" id=\"stat-info\" style=\"color: #4ec9b0;\">{}</span></div>\n", info_count));
     html.push_str("</div>\n");
 
     // Controls
@@ -481,10 +512,10 @@ fn generate_logs_panel(admin_key: &str, filter: Option<&str>, level_filter: Opti
     html.push_str("</div>\n");
 
     // Log entries
-    html.push_str("<div class=\"log-container\">\n");
+    html.push_str("<div class=\"log-container\" id=\"log-container\">\n");
 
     if all_entries.is_empty() {
-        html.push_str("<div class=\"no-logs\">No log entries found. Logs will appear here as the server processes requests.</div>\n");
+        html.push_str("<div class=\"no-logs\" id=\"no-logs\">No log entries found. Logs will appear here as the server processes requests.</div>\n");
     } else {
         for entry in all_entries {
             let level_class = entry.level.to_uppercase();
@@ -506,87 +537,118 @@ fn generate_logs_panel(admin_key: &str, filter: Option<&str>, level_filter: Opti
 
     html.push_str("</div>\n");
 
-    // JavaScript for filtering
+    // JavaScript for SSE live log streaming
     html.push_str("<script>\n");
+    html.push_str("let logCount = parseInt(document.getElementById('stat-total').textContent) || 0;\n");
+    html.push_str("let errorCount = parseInt(document.getElementById('stat-errors').textContent) || 0;\n");
+    html.push_str("let warnCount = parseInt(document.getElementById('stat-warnings').textContent) || 0;\n");
+    html.push_str("let infoCount = parseInt(document.getElementById('stat-info').textContent) || 0;\n");
+    html.push_str("\n");
+    html.push_str("function escapeHtml(text) {\n");
+    html.push_str("  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&#x27;');\n");
+    html.push_str("}\n");
+    html.push_str("\n");
+    html.push_str("function addLogEntry(entry) {\n");
+    html.push_str("  const container = document.getElementById('log-container');\n");
+    html.push_str("  const noLogs = document.getElementById('no-logs');\n");
+    html.push_str("  if (noLogs) noLogs.remove();\n");
+    html.push_str("  const levelClass = entry.level.toUpperCase();\n");
+    html.push_str("  const div = document.createElement('div');\n");
+    html.push_str("  div.className = 'log-entry';\n");
+    html.push_str("  div.innerHTML = '<div class=\"log-timestamp\">' + escapeHtml(entry.timestamp) + '</div>' +\n");
+    html.push_str("    '<div class=\"log-level ' + levelClass + '\">' + escapeHtml(entry.level) + '</div>' +\n");
+    html.push_str("    '<div class=\"log-message\">' + escapeHtml(entry.message) + '</div>' +\n");
+    html.push_str("    '<div class=\"log-source\">' + escapeHtml(entry.source) + '</div>';\n");
+    html.push_str("  container.prepend(div);\n");
+    html.push_str("  logCount++;\n");
+    html.push_str("  if (entry.level === 'ERROR') errorCount++;\n");
+    html.push_str("  else if (entry.level === 'WARN') warnCount++;\n");
+    html.push_str("  else if (entry.level === 'INFO') infoCount++;\n");
+    html.push_str("  updateStats();\n");
+    html.push_str("}\n");
+    html.push_str("\n");
+    html.push_str("function updateStats() {\n");
+    html.push_str("  document.getElementById('stat-total').textContent = logCount;\n");
+    html.push_str("  document.getElementById('stat-errors').textContent = errorCount;\n");
+    html.push_str("  document.getElementById('stat-warnings').textContent = warnCount;\n");
+    html.push_str("  document.getElementById('stat-info').textContent = infoCount;\n");
+    html.push_str("}\n");
+    html.push_str("\n");
     html.push_str("function applyFilters() {\n");
-    html.push_str("  console.log('applyFilters called');\n");
     html.push_str("  const filter = document.getElementById('filter').value;\n");
     html.push_str("  const level = document.getElementById('level').value;\n");
     html.push_str("  const limit = document.getElementById('limit').value;\n");
-    html.push_str("  \n");
-    html.push_str("  console.log('Filter values:', { filter, level, limit });\n");
-    html.push_str("  \n");
     html.push_str("  let url = window.location.pathname;\n");
     html.push_str("  const params = new URLSearchParams();\n");
     html.push_str("  if (filter) params.append('filter', filter);\n");
     html.push_str("  if (level !== 'all') params.append('level', level);\n");
     html.push_str("  if (limit !== '100') params.append('limit', limit);\n");
-    html.push_str("  \n");
-    html.push_str("  if (params.toString()) {\n");
-    html.push_str("    url += '?' + params.toString();\n");
-    html.push_str("  }\n");
-    html.push_str("  \n");
-    html.push_str("  console.log('Redirecting to:', url);\n");
+    html.push_str("  if (params.toString()) url += '?' + params.toString();\n");
     html.push_str("  window.location.href = url;\n");
     html.push_str("}\n");
     html.push_str("\n");
     html.push_str("function clearLogs() {\n");
-    html.push_str("  console.log('clearLogs called');\n");
     html.push_str("  if (confirm('Are you sure you want to clear all logs? This action cannot be undone.')) {\n");
-    html.push_str("    console.log('User confirmed, sending POST request');\n");
     html.push_str("    fetch(window.location.pathname, {\n");
     html.push_str("      method: 'POST',\n");
     html.push_str("      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },\n");
     html.push_str("      body: 'action=clear'\n");
     html.push_str("    }).then(response => {\n");
-    html.push_str("      console.log('Response status:', response.status);\n");
-    html.push_str("      if (response.ok) {\n");
-    html.push_str("        console.log('Logs cleared successfully, reloading page');\n");
-    html.push_str("        window.location.reload();\n");
-    html.push_str("      } else {\n");
-    html.push_str("        console.error('Error response:', response.status, response.statusText);\n");
-    html.push_str("        alert('Error clearing logs. Please try again.');\n");
-    html.push_str("      }\n");
-    html.push_str("    }).catch(error => {\n");
-    html.push_str("      console.error('Fetch error:', error);\n");
-    html.push_str("      alert('Error clearing logs. Please try again.');\n");
-    html.push_str("    });\n");
+    html.push_str("      if (response.ok) window.location.reload();\n");
+    html.push_str("      else alert('Error clearing logs. Please try again.');\n");
+    html.push_str("    }).catch(error => alert('Error clearing logs. Please try again.'));\n");
     html.push_str("  }\n");
     html.push_str("}\n");
     html.push_str("\n");
-    html.push_str("// Add event listeners for better UX\n");
+    html.push_str("function updateConnectionStatus(connected) {\n");
+    html.push_str("  const status = document.getElementById('connection-status');\n");
+    html.push_str("  if (status) {\n");
+    html.push_str("    status.textContent = connected ? 'Live' : 'Disconnected';\n");
+    html.push_str("    status.style.color = connected ? '#4ec9b0' : '#f44747';\n");
+    html.push_str("  }\n");
+    html.push_str("}\n");
+    html.push_str("\n");
     html.push_str("document.addEventListener('DOMContentLoaded', function() {\n");
-    html.push_str("  // Auto-apply filters when Enter is pressed in search box\n");
     html.push_str("  const filterInput = document.getElementById('filter');\n");
     html.push_str("  if (filterInput) {\n");
     html.push_str("    filterInput.addEventListener('keypress', function(e) {\n");
-    html.push_str("      if (e.key === 'Enter') {\n");
-    html.push_str("        applyFilters();\n");
-    html.push_str("      }\n");
+    html.push_str("      if (e.key === 'Enter') applyFilters();\n");
     html.push_str("    });\n");
     html.push_str("  }\n");
-    html.push_str("  \n");
-    html.push_str("  // Auto-apply filters when dropdowns change\n");
     html.push_str("  const levelSelect = document.getElementById('level');\n");
-    html.push_str("  const limitSelect = document.getElementById('limit');\n");
-    html.push_str("  \n");
     html.push_str("  if (levelSelect) {\n");
-    html.push_str("    levelSelect.addEventListener('change', function() {\n");
-    html.push_str("      applyFilters();\n");
-    html.push_str("    });\n");
+    html.push_str("    levelSelect.addEventListener('change', function() { applyFilters(); });\n");
     html.push_str("  }\n");
-    html.push_str("  \n");
+    html.push_str("  const limitSelect = document.getElementById('limit');\n");
     html.push_str("  if (limitSelect) {\n");
-    html.push_str("    limitSelect.addEventListener('change', function() {\n");
-    html.push_str("      applyFilters();\n");
-    html.push_str("    });\n");
+    html.push_str("    limitSelect.addEventListener('change', function() { applyFilters(); });\n");
     html.push_str("  }\n");
+    html.push_str("\n");
+    html.push_str("  // Connect to SSE stream for live log updates\n");
+    html.push_str("  const sseUrl = window.location.pathname + '?sse=1';\n");
+    html.push_str("  const eventSource = new EventSource(sseUrl);\n");
+    html.push_str("\n");
+    html.push_str("  eventSource.onopen = function() {\n");
+    html.push_str("    updateConnectionStatus(true);\n");
+    html.push_str("  };\n");
+    html.push_str("\n");
+    html.push_str("  eventSource.onmessage = function(event) {\n");
+    html.push_str("    try {\n");
+    html.push_str("      const entry = JSON.parse(event.data);\n");
+    html.push_str("      addLogEntry(entry);\n");
+    html.push_str("    } catch(e) {\n");
+    html.push_str("      console.error('Failed to parse SSE event:', e);\n");
+    html.push_str("    }\n");
+    html.push_str("  };\n");
+    html.push_str("\n");
+    html.push_str("  eventSource.onerror = function() {\n");
+    html.push_str("    updateConnectionStatus(false);\n");
+    html.push_str("  };\n");
     html.push_str("});\n");
     html.push_str("</script>\n");
-
+    html.push_str("\n");
     html.push_str("<div class=\"refresh-info\">\n");
-    html.push_str("<p>This page refreshes automatically every 10 seconds</p>\n");
-    html.push_str(&format!("<p>Last updated: {}</p>\n", get_current_timestamp()));
+    html.push_str("<span>Connection: <span id=\"connection-status\" style=\"color: #4ec9b0;\">Connecting...</span></span>\n");
     html.push_str("</div>\n");
 
     html.push_str("</div>\n");
@@ -660,7 +722,3 @@ pub fn handle_logs_admin_request(
     Err("Method not allowed".to_string())
 }
 
-// Get admin paths
-pub fn get_logs_admin_paths() -> Vec<String> {
-    vec!["/logs_".to_string()]
-}

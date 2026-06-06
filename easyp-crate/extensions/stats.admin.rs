@@ -1019,7 +1019,3 @@ mod windows_stats {
     }
 }
 
-// Get admin paths
-pub fn get_stats_admin_paths() -> Vec<String> {
-    vec!["/stats_".to_string()]
-}

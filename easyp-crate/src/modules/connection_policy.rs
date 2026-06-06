@@ -9,15 +9,12 @@ use super::http_version::HttpVersion;
 pub struct ConnectionPolicy {
     /// Maximum number of requests per connection
     pub max_requests: usize,
-    /// Idle timeout in seconds
-    pub idle_timeout_seconds: u64,
 }
 
 impl Default for ConnectionPolicy {
     fn default() -> Self {
         Self {
             max_requests: 100,
-            idle_timeout_seconds: 5,
         }
     }
 }
@@ -27,14 +24,12 @@ impl ConnectionPolicy {
     ///
     /// # Arguments
     /// * `max_requests` - Maximum number of requests per connection
-    /// * `idle_timeout_seconds` - Idle timeout in seconds
     ///
     /// # Returns
     /// * `ConnectionPolicy` - New connection policy
-    pub fn new(max_requests: usize, idle_timeout_seconds: u64) -> Self {
+    pub fn new(max_requests: usize) -> Self {
         Self {
             max_requests,
-            idle_timeout_seconds,
         }
     }
 

@@ -2,7 +2,7 @@
 // Writes logs to files with rotation and proper formatting
 
 use std::fs::{File, OpenOptions};
-use std::io::{self, Write};
+use std::io::Write;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -103,11 +103,4 @@ pub fn get_log_file_path() -> Option<String> {
     FILE_LOGGER.get().map(|logger| logger.log_path().to_string())
 }
 
-/// Rotate the log file
-pub fn rotate_log_file() -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(logger) = FILE_LOGGER.get() {
-        logger.rotate()?;
-    }
-    Ok(())
-}
 

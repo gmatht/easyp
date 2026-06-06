@@ -183,13 +183,6 @@ impl HttpResponse {
         self.set_cache_control("no-cache");
     }
 
-    /// Add security headers without overriding cache control
-    pub fn add_security_headers_no_cache_override(&mut self) {
-        self.set_header("X-Content-Type-Options", "nosniff");
-        self.set_header("X-Frame-Options", "DENY");
-        self.set_header("X-XSS-Protection", "1; mode=block");
-    }
-
     /// Encode the response for a specific HTTP version
     ///
     /// # Arguments

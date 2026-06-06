@@ -142,13 +142,6 @@ impl HourlyStatsCollector {
         Ok(())
     }
 
-    /// Get the last 48 hours of statistics
-    pub fn get_stats(&self) -> Result<Vec<HourlyStats>, String> {
-        let stats = self.stats.lock()
-            .map_err(|e| format!("Failed to lock stats: {}", e))?;
-        Ok(stats.iter().cloned().collect())
-    }
-
     /// Get memory usage in MB
     fn get_memory_usage(&self) -> Result<f64, String> {
         #[cfg(target_os = "windows")]

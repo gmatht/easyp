@@ -11,11 +11,9 @@
 //!   cargo run --example easyp --features acme -- --help
 
 use std::collections::{BTreeMap, HashMap};
-use std::io::{Read, Write};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::IpAddr;
 use std::os::unix::io::AsRawFd;
 use futures::io::{AsyncReadExt, AsyncWriteExt};
-use std::process::Command as StdCommand;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -27,18 +25,17 @@ use hourly_stats::{HourlyStatsCollector, start_stats_collection_task};
 // Import file logger
 #[path = "../modules/file_logger.rs"]
 mod file_logger;
-use file_logger::{init_file_logger, write_file_log, get_log_file_path};
+use file_logger::{init_file_logger, write_file_log};
 use std::time::Duration;
 
 // Runtime ACME client (still depends on acme-lib, no rustls types)
 #[cfg(feature = "acme")]
 use rustls_acme::AcmeClient;
-use rustls_acme::{AcmeConfig, ChallengeType};
 
 // Import enhanced error reporting
 #[path = "../modules/enhanced_error.rs"]
 mod enhanced_error;
-use enhanced_error::{file_ops, network_ops, EnhancedError};
+use enhanced_error::{file_ops, network_ops};
 
 use lexopt::prelude::*;
 use std::sync::OnceLock;
@@ -58,6 +55,10 @@ impl log::Log for SimpleLogger {
 
             // Also write to file
             write_file_log(&record.level().to_string(), &record.args().to_string());
+
+            // Broadcast to SSE subscribers (when extensions are enabled)
+            #[cfg(feature = "extensions")]
+            crate::logs_admin::add_log_entry(&record.level().to_string(), &record.args().to_string(), "server");
         }
     }
 
@@ -363,28 +364,8 @@ struct SniFallback {
     fallback_x509: *mut std::ffi::c_void,
     /// Fallback private key (EVP_PKEY*)
     fallback_pkey: *mut std::ffi::c_void,
-    /// Shared cache: hostname → (cert_pem, key_pem)
-    cert_cache: std::sync::RwLock<HashMap<String, (String, String)>>,
     /// Cache of parsed pointers: hostname → (x509_ptr, pkey_ptr)
     ptr_cache: std::sync::RwLock<HashMap<String, (*mut std::ffi::c_void, *mut std::ffi::c_void)>>,
-}
-
-impl SniFallback {
-    /// Store a certificate in the SNI cache so future connections use it.
-    /// `cert_pem` and `key_pem` are PEM-encoded certificate and private key strings.
-    pub fn cache_cert(&self, hostname: &str, cert_pem: &str, key_pem: &str) {
-        // Parse PEM to raw OpenSSL pointers
-        if let Ok(x509) = lsb_openssl::certs::pem_read_certificate(cert_pem) {
-            if let Ok(pkey) = lsb_openssl::certs::pem_read_private_key(key_pem) {
-                if let Ok(mut ptr_cache) = self.ptr_cache.write() {
-                    let _ = ptr_cache.insert(hostname.to_string(), (x509, pkey));
-                }
-                if let Ok(mut cache) = self.cert_cache.write() {
-                    let _ = cache.insert(hostname.to_string(), (cert_pem.to_string(), key_pem.to_string()));
-                }
-            }
-        }
-    }
 }
 
 unsafe impl Send for SniFallback {}
@@ -661,7 +642,6 @@ impl OnDemandHttpsServer {
                  let sni_fallback = Arc::new(SniFallback {
                      fallback_x509: sni_x509,
                      fallback_pkey: sni_pkey,
-                     cert_cache: std::sync::RwLock::new(HashMap::new()),
                      ptr_cache: std::sync::RwLock::new(HashMap::new()),
                  });
 
@@ -1159,6 +1139,43 @@ impl OnDemandHttpsServer {
                     body.pop();
                 }
 
+                // Check for SSE streaming request
+                let is_sse = query_string.split('&').any(|param| param == "sse=1" || param == "sse");
+
+                if is_sse {
+                    // Handle SSE stream request with keep-alive heartbeat
+                    let stream_result = extension_registry.lock().unwrap().handle_stream_request(admin_path);
+                    match stream_result {
+                        Ok(Some(mut rx)) => {
+                            use futures::stream::StreamExt;
+
+                            let sse_headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\n\r\n";
+                            stream.write_all(sse_headers.as_bytes()).await?;
+                            stream.flush().await?;
+
+                            while let Some(event) = rx.next().await {
+                                let sse_frame = format!("data: {}\n\n", event);
+                                if stream.write_all(sse_frame.as_bytes()).await.is_err() { break; }
+                                if stream.flush().await.is_err() { break; }
+                            }
+                            return Ok(());
+                        }
+                        Ok(None) => {
+                            // No stream handler for this extension, fall through
+                        }
+                        Err(e) => {
+                            let error_msg = format!("SSE Error: {}", e);
+                            let mut response = HttpResponse::internal_server_error(error_msg.as_bytes().to_vec());
+                            response.set_content_type("text/plain");
+                            response.set_content_length();
+                            let response_bytes = response.encode(&HttpVersion::Http11, false);
+                            let _ = stream.write_all(&response_bytes).await;
+                            let _ = stream.flush().await;
+                            return Ok(());
+                        }
+                    }
+                }
+
                 // Handle admin extension request
                 let admin_response = extension_registry.lock().unwrap().process_admin_request(admin_path, http_method, query_string, &body, &headers);
                 match admin_response {
@@ -1444,7 +1461,7 @@ impl OnDemandHttpsServer {
             }
         }
 
-        let mut connection_policy = ConnectionPolicy::new(100, 300);
+        let mut connection_policy = ConnectionPolicy::new(100);
         let mut request_count = 0;
 
         loop {
@@ -1612,6 +1629,40 @@ impl OnDemandHttpsServer {
                 } else {
                     String::new()
                 };
+
+                // Check for SSE streaming request
+                let is_sse = query_string.split('&').any(|param| param == "sse=1" || param == "sse");
+
+                if is_sse {
+                    // Handle SSE stream request with keep-alive heartbeat
+                    let stream_result = extension_registry.lock().unwrap().handle_stream_request(admin_path);
+                    match stream_result {
+                        Ok(Some(mut rx)) => {
+                            use futures::stream::StreamExt;
+
+                            let sse_headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\n\r\n";
+                            tls_stream.write_all(sse_headers.as_bytes()).await?;
+                            tls_stream.flush().await?;
+
+                            while let Some(event) = rx.next().await {
+                                let sse_frame = format!("data: {}\n\n", event);
+                                if tls_stream.write_all(sse_frame.as_bytes()).await.is_err() { break; }
+                                if tls_stream.flush().await.is_err() { break; }
+                            }
+                            return Ok((http_version.clone(), Some("close".to_string())));
+                        }
+                        Ok(None) => {
+                            // No stream handler for this extension, fall through
+                        }
+                        Err(e) => {
+                            let error_response = format!("HTTP/1.1 500 Internal Server Error\r\nContent-Length: {}\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nSSE Error: {}",
+                                e.to_string().len() + 10, e);
+                            tls_stream.write_all(error_response.as_bytes()).await?;
+                            tls_stream.flush().await?;
+                            return Ok((http_version.clone(), Some("close".to_string())));
+                        }
+                    }
+                }
 
                 // Handle admin extension request
                 let admin_response = extension_registry.lock().unwrap().process_admin_request(admin_path, http_method, query_string, &body, &headers);

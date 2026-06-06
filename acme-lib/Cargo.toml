@@ -24,12 +24,12 @@ rand = "0.8"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-minreq = { path = "../minreq", features = ["https-rustls"], default-features = false }
+minreq = { version = "2.14", features = ["https-rustls"], default-features = false }
 lsb-openssl = { path = "../lsb_dynamic_loader/crates/lsb-openssl" }
 sha2 = "0.10"
 
 [target.'cfg(target_os = "redox")'.dependencies]
-minreq = { path = "../minreq", default-features = false }
+minreq = { version = "2.14", default-features = false }
 
 [dev-dependencies]
 env_logger = { version = "0.11", default-features = false }

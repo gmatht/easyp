@@ -225,7 +225,3 @@ fn get_rust_version() -> String {
         .unwrap_or_else(|_| "Unknown".to_string())
 }
 
-/// Get all admin panel paths for the about extension
-pub fn get_about_admin_paths() -> Vec<String> {
-    vec!["about".to_string()]
-}

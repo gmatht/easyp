@@ -20,64 +20,6 @@ use super::file_cache::{FileCacheInfo, should_return_not_modified, parse_conditi
 //#[cfg(unix)]
 // use std::os::unix::fs::PermissionsExt; // Not currently used
 
-/// Format a SystemTime as an HTTP date string (RFC 7231)
-/// Returns a string in the format: "Wed, 21 Oct 2015 07:28:00 GMT"
-fn format_http_date(time: &SystemTime) -> String {
-    let duration_since_epoch = time.duration_since(UNIX_EPOCH).unwrap_or_default();
-    let timestamp = duration_since_epoch.as_secs();
-
-    // Convert Unix timestamp to HTTP date format
-    // This is a simplified implementation - in production you might want to use a proper date formatting library
-    let days_since_epoch = timestamp / 86400;
-    let seconds_today = timestamp % 86400;
-
-    let hours = seconds_today / 3600;
-    let minutes = (seconds_today % 3600) / 60;
-    let seconds = seconds_today % 60;
-
-    // Calculate year, month, day (simplified - doesn't handle leap years perfectly)
-    let year = 1970 + (days_since_epoch / 365);
-    let day_of_year = (days_since_epoch % 365) + 1;
-
-    // Simple month calculation (approximate)
-    let month = if day_of_year <= 31 { 1 } // Jan
-    else if day_of_year <= 59 { 2 } // Feb
-    else if day_of_year <= 90 { 3 } // Mar
-    else if day_of_year <= 120 { 4 } // Apr
-    else if day_of_year <= 151 { 5 } // May
-    else if day_of_year <= 181 { 6 } // Jun
-    else if day_of_year <= 212 { 7 } // Jul
-    else if day_of_year <= 243 { 8 } // Aug
-    else if day_of_year <= 273 { 9 } // Sep
-    else if day_of_year <= 304 { 10 } // Oct
-    else if day_of_year <= 334 { 11 } // Nov
-    else { 12 }; // Dec
-
-    let day_of_month = day_of_year - match month {
-        1 => 0,
-        2 => 31,
-        3 => 59,
-        4 => 90,
-        5 => 120,
-        6 => 151,
-        7 => 181,
-        8 => 212,
-        9 => 243,
-        10 => 273,
-        11 => 304,
-        12 => 334,
-        _ => 0,
-    };
-
-    // Calculate day of week (simplified)
-    let day_of_week = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][(days_since_epoch % 7) as usize];
-    let month_name = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][(month - 1) as usize];
-
-    format!("{}, {:02} {} {} {:02}:{:02}:{:02} GMT",
-            day_of_week, day_of_month, month_name, year, hours, minutes, seconds)
-}
-
 // Simple HTTP method classification for file serving
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum HttpMethod {
@@ -374,11 +316,6 @@ impl SecureFileServer {
         Ok(())
     }
 
-    /// Sanitize and canonicalize a path to prevent directory traversal attacks
-    pub fn sanitize_path(&self, request_path: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
-        self.sanitize_path_with_root(request_path, &self.config.document_root)
-    }
-
     /// Sanitize and canonicalize a path with a specific document root
     pub fn sanitize_path_with_root(&self, request_path: &str, document_root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
         // Remove any query parameters or fragments
@@ -485,12 +422,6 @@ impl SecureFileServer {
         }
 
         Ok(canonical_path)
-    }
-
-    /// Check if a path should redirect (directory without trailing slash)
-    /// Returns Some(redirect_url) if redirect is needed, None otherwise
-    pub fn check_redirect(&self, request_path: &str) -> Option<String> {
-        self.check_redirect_with_domain(request_path, None)
     }
 
     /// Check if a path should redirect with domain-specific document root
@@ -770,31 +701,9 @@ impl SecureFileServer {
         String::from_utf8_lossy(&encoded).to_string()
     }
 
-    /// Check if a file extension is allowed
-    pub fn is_extension_allowed(&self, extension: &str) -> bool {
-        let extension = extension.to_lowercase();
-
-        // Check blocked extensions
-        if self.config.blocked_extensions.contains(&extension) {
-            return false;
-        }
-
-        // Check allowed extensions (if specified)
-        if !self.config.allowed_extensions.is_empty() {
-            return self.config.allowed_extensions.contains(&extension);
-        }
-
-        true
-    }
-
     /// Get security configuration
     pub fn config(&self) -> &SecurityConfig {
         &self.config
-    }
-
-    /// Update security configuration
-    pub fn update_config(&mut self, config: SecurityConfig) {
-        self.config = config;
     }
 
     /// Generate a default informational page when index.html is missing

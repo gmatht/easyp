@@ -152,8 +152,3 @@ pub fn handle_all_admin_request(
 
     Err("Method not allowed".to_string())
 }
-
-// Get admin paths
-pub fn get_all_admin_paths() -> Vec<String> {
-    vec!["/all_".to_string()]
-}

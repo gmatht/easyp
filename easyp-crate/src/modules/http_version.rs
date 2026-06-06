@@ -39,21 +39,6 @@ impl HttpVersion {
         }
     }
 
-    pub fn supports_headers(&self) -> bool {
-        !matches!(self, HttpVersion::Http09)
-    }
-
-    pub fn supports_persistent_connections(&self) -> bool {
-        matches!(self, HttpVersion::Http11 | HttpVersion::Http2 | HttpVersion::Http3)
-    }
-
-    pub fn is_multiplexed(&self) -> bool {
-        matches!(self, HttpVersion::Http2 | HttpVersion::Http3)
-    }
-
-    pub fn is_binary_framed(&self) -> bool {
-        matches!(self, HttpVersion::Http2 | HttpVersion::Http3)
-    }
 }
 
 impl fmt::Display for HttpVersion {
