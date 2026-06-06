@@ -28,7 +28,6 @@ struct LoadAverage {
 #[derive(Debug)]
 struct UptimeInfo {
     uptime_seconds: f64,
-    idle_seconds: f64,
 }
 
 // CPU information
@@ -152,7 +151,6 @@ fn parse_uptime() -> Result<UptimeInfo, String> {
     if parts.len() >= 2 {
         Ok(UptimeInfo {
             uptime_seconds: parts[0].parse().map_err(|e| format!("Failed to parse uptime: {}", e))?,
-            idle_seconds: parts[1].parse().map_err(|e| format!("Failed to parse idle time: {}", e))?,
         })
     } else {
     Err("Invalid uptime format".to_string())
@@ -373,7 +371,7 @@ fn calculate_cpu_usage(cpu_info: &CpuInfo) -> f64 {
 }
 
 // Generate stats admin panel HTML
-fn generate_stats_panel(admin_key: &str) -> String {
+fn generate_stats_panel(_admin_key: &str) -> String {
     let mut html = String::new();
 
     html.push_str("<!DOCTYPE html>\n");
@@ -763,8 +761,7 @@ fn load_hourly_stats() -> Result<Vec<HourlyStats>, String> {
 fn format_timestamp(timestamp: u64) -> String {
     use std::time::{SystemTime, UNIX_EPOCH, Duration};
 
-    let datetime = UNIX_EPOCH + Duration::from_secs(timestamp);
-    let datetime = SystemTime::from(datetime);
+    let _datetime = SystemTime::from(UNIX_EPOCH + Duration::from_secs(timestamp));
 
     // Simple formatting - you could use a proper date library for better formatting
     let total_seconds = timestamp;
@@ -930,7 +927,6 @@ mod windows_stats {
 
         Ok(UptimeInfo {
             uptime_seconds: parts[0].parse().unwrap_or(0.0),
-            idle_seconds: parts[1].parse().unwrap_or(0.0),
         })
     }
 

@@ -38,10 +38,6 @@ impl Response {
         &self.headers
     }
     
-    pub fn body(&self) -> &Body {
-        &self.body
-    }
-    
     pub fn body_mut(&mut self) -> &mut Body {
         &mut self.body
     }

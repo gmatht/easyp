@@ -44,7 +44,7 @@ type SslCtxSetAlpnSelectCbFn = unsafe extern "C" fn(ctx: *mut c_void, cb: Option
 
 pub const SSL_TLSEXT_ERR_OK: i32 = 0;
 pub const SSL_TLSEXT_ERR_ALERT_FATAL: i32 = 2;
-const TLSEXT_NAMETYPE_host_name: c_int = 0;
+const TLSEXT_NAMETYPE_HOST_NAME: c_int = 0;
 
 type AlpnSelectCb = unsafe extern "C" fn(
     ssl: *mut c_void,
@@ -414,7 +414,7 @@ impl Openssl {
     pub fn ssl_get_servername(&self, ssl: *mut c_void) -> Option<String> {
         self.ssl_get_servername.and_then(|f| {
             unsafe {
-                let p = f(ssl, TLSEXT_NAMETYPE_host_name);
+                let p = f(ssl, TLSEXT_NAMETYPE_HOST_NAME);
                 if p.is_null() { None }
                 else { Some(CStr::from_ptr(p).to_string_lossy().into_owned()) }
             }

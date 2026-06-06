@@ -72,20 +72,4 @@ md5 = "0.7"
 
 
 
-[profile.release]
-opt-level = "z"  # Optimize for size
-lto = "fat"      # Link-time optimization
-codegen-units = 1
-panic = "abort"  # Smaller panic handling
-strip = true     # Remove debug symbols
-
-[profile.lto]
-opt-level = "z"
-strip = true
-lto = "fat"
-incremental = false
-overflow-checks = true
-debug = false
-codegen-units = 1
-inherits = "release"
 

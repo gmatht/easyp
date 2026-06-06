@@ -2,7 +2,7 @@
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
-use crate::req::{Response, Body};
+use crate::req::Response;
 
 use crate::acc::AcmeKey;
 use crate::jwt::*;

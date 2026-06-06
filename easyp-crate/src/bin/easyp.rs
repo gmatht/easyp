@@ -22,10 +22,8 @@ use std::sync::{Arc, Mutex};
 mod hourly_stats;
 use hourly_stats::{HourlyStatsCollector, start_stats_collection_task};
 
-// Import file logger
 #[path = "../modules/file_logger.rs"]
 mod file_logger;
-use file_logger::{init_file_logger, write_file_log};
 use std::time::Duration;
 
 // Runtime ACME client (still depends on acme-lib, no rustls types)
@@ -155,14 +153,11 @@ struct Args {
     staging: bool,
     over_9000: bool,
     test_client: Option<String>,
-    test_root: String,
     root: String,
     allowed_ips: Option<String>,
     cache_dir: String,
     verbose: bool,
     test_mode: bool,
-    restore_backup: bool,
-    bogus_domain: Option<String>,
     port: u16,
     acme_directory: String,
     acme_email: Option<String>,
@@ -181,7 +176,6 @@ impl Args {
         let mut staging = false;
         let mut over_9000 = false;
         let mut test_client = None;
-        let mut test_root = "test_root".to_string();
         let mut root = "/var/www/html".to_string();
         let mut allowed_ips = None;
         // Use user-appropriate cache directory based on whether running as root
@@ -194,8 +188,6 @@ impl Args {
         };
         let mut verbose = false;
         let mut test_mode = false;
-        let mut restore_backup = false;
-        let mut bogus_domain = None;
         let mut port = 443;
         let mut acme_directory = "https://acme-v02.api.letsencrypt.org/directory".to_string();
         let mut acme_email = None;
@@ -231,9 +223,6 @@ impl Args {
                 Long("test-client") => {
                     test_client = Some(parser.value()?.to_string_lossy().to_string());
                 }
-                Long("test-root") => {
-                    test_root = parser.value()?.to_string_lossy().to_string();
-                }
                 Long("root") => {
                     root = parser.value()?.to_string_lossy().to_string();
                 }
@@ -248,12 +237,6 @@ impl Args {
                 }
                 Long("test-mode") => {
                     test_mode = true;
-                }
-                Long("restore-backup") => {
-                    restore_backup = true;
-                }
-                Long("bogus-domain") => {
-                    bogus_domain = Some(parser.value()?.to_string_lossy().to_string());
                 }
                 Long("acme-directory") => {
                     acme_directory = parser.value()?.to_string_lossy().to_string();
@@ -291,7 +274,6 @@ impl Args {
                     println!("        --staging                         Use Let's Encrypt staging environment");
                     println!("        --over-9000                       Add 9000 to default port numbers (HTTP: 9080, HTTPS: 9443)");
                     println!("        --test-client <CLIENT>            Test client binary to run when server is ready");
-                    println!("        --test-root <ROOT>                Test root directory for integration tests [default: test_root]");
                     println!("        --root <ROOT>                     Document root directory [default: /var/www/html]");
                     println!("        --allowed-ips <IPS>               Allowed IP addresses for on-demand certificate requests (comma-separated)");
                     println!("        --cache-dir <DIR>                 Cache directory for ACME certificates [default: /var/lib/easyp/certs for root, ~/.local/share/easyp/certs for users]");
@@ -339,14 +321,11 @@ impl Args {
             staging,
             over_9000,
             test_client,
-            test_root,
             root,
             allowed_ips,
             cache_dir,
             verbose,
             test_mode,
-            restore_backup,
-            bogus_domain,
             port,
             acme_directory,
             acme_email,
@@ -911,8 +890,10 @@ impl OnDemandHttpsServer {
         secure_file_server: SecureFileServer,
         extension_registry: Arc<Mutex<ExtensionRegistry>>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Create connection policy for Keep-Alive decisions
-        let connection_policy = ConnectionPolicy::default();
+        let connection_policy = ConnectionPolicy::new(
+            secure_file_server.config().keep_alive_max_requests,
+            secure_file_server.config().keep_alive_timeout,
+        );
         let mut request_count = 0;
 
         // Keep-Alive loop: handle multiple requests on the same connection
@@ -1404,10 +1385,12 @@ impl OnDemandHttpsServer {
         println!("Starting HTTPS connection handling (libssl)");
 
         // Initialize OpenSSL and create SSL context in a blocking task
-        let cache_dir = args.cache_dir.clone();
+        let _cache_dir = args.cache_dir.clone();
+        #[cfg(feature = "http2")]
         let http2_enabled = args.http2_enabled;
         let fd = stream.as_raw_fd();
 
+        #[cfg_attr(not(feature = "http2"), allow(unused_variables))]
         let (ssl_conn, alpn): (lsb_openssl::SslConn, Option<Vec<u8>>) = smol::unblock(move || -> Result<_, Box<dyn std::error::Error + Send + Sync>> {
                 // Temporarily set fd to blocking for the TLS handshake
                 unsafe {
@@ -1461,7 +1444,10 @@ impl OnDemandHttpsServer {
             }
         }
 
-        let mut connection_policy = ConnectionPolicy::new(100);
+        let connection_policy = ConnectionPolicy::new(
+            secure_file_server.config().keep_alive_max_requests,
+            secure_file_server.config().keep_alive_timeout,
+        );
         let mut request_count = 0;
 
         loop {
@@ -1761,9 +1747,8 @@ impl OnDemandHttpsServer {
                 println!("🔍 Serving {} bytes over async HTTPS", final_response_bytes.len());
 
                 // Write in chunks to handle large files properly with tokio-rustls
-                let chunk_size = 8192; // 8KB chunks
+                let chunk_size = 8192;
                 let mut offset = 0;
-                let mut retry_count = 0;
                 const MAX_RETRIES: u32 = 3;
 
                 while offset < final_response_bytes.len() {
@@ -1782,14 +1767,11 @@ impl OnDemandHttpsServer {
                     for attempt in 0..MAX_RETRIES {
                         match tls_stream.write_all(chunk).await {
                             Ok(_) => {
-                                // Successfully wrote the chunk
                                 offset = end;
                                 write_success = true;
-                                retry_count = 0; // Reset retry count on success
                                 break;
                             }
                             Err(e) => {
-                                retry_count += 1;
                                 eprintln!("Error writing chunk at offset {} (attempt {}): {}", offset, attempt + 1, e);
 
                                 if attempt < MAX_RETRIES - 1 {
@@ -1893,88 +1875,6 @@ impl OnDemandHttpsServer {
 
 
 
-
-    /// Get challenge response for a token from ACME client
-    fn get_challenge_response(&self, token: &str) -> Option<String> {
-        // Try to get from ACME client if available
-        if let Some(acme_client) = &self.acme_client {
-            if let Some(response) = futures::executor::block_on(acme_client.get_challenge_response(token)) {
-                return Some(response);
-            }
-        }
-
-        // Fallback to local storage
-        if let Ok(challenges) = self.http_challenges.lock() {
-            if let Some(response) = challenges.get(token) {
-                return Some(response.clone());
-            }
-        }
-
-        // Last resort: placeholder response
-        if !token.is_empty() {
-            Some(format!("challenge-response-for-{}", token))
-        } else {
-            None
-        }
-    }
-
-    /// Get challenge response for a token from parameters (static method)
-    fn get_challenge_response_from_params_static(
-        acme_client: &Option<Arc<AcmeClient>>,
-        http_challenges: &Arc<Mutex<BTreeMap<String, String>>>,
-        token: &str,
-    ) -> Option<String> {
-        // Try to get from ACME client if available
-        if let Some(acme_client) = acme_client {
-            if let Some(response) = futures::executor::block_on(acme_client.get_challenge_response(token)) {
-                return Some(response);
-            }
-        }
-
-        // Fallback to local storage
-        if let Ok(challenges) = http_challenges.lock() {
-            if let Some(response) = challenges.get(token) {
-                return Some(response.clone());
-            }
-        }
-
-        // Last resort: placeholder response
-        if !token.is_empty() {
-            Some(format!("challenge-response-for-{}", token))
-        } else {
-            None
-        }
-    }
-
-    /// Get challenge response for a token from parameters (static method)
-    fn get_challenge_response_from_params(
-        acme_client: &Option<Arc<AcmeClient>>,
-        http_challenges: &Arc<Mutex<BTreeMap<String, String>>>,
-        token: &str,
-    ) -> Option<String> {
-        // Try to get from ACME client if available
-        if let Some(acme_client) = acme_client {
-            if let Some(response) = futures::executor::block_on(acme_client.get_challenge_response(token)) {
-                return Some(response);
-            }
-        }
-
-        // Fallback to local storage
-        if let Ok(challenges) = http_challenges.lock() {
-            if let Some(response) = challenges.get(token) {
-                return Some(response.clone());
-            }
-        }
-
-        // Last resort: placeholder response
-        if !token.is_empty() {
-            Some(format!("challenge-response-for-{}", token))
-        } else {
-            None
-        }
-    }
-
-    // No more challenge syncing needed - challenges are accessed directly from ACME client
 }
 
 

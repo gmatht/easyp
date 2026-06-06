@@ -87,21 +87,6 @@ impl LogStorage {
         filtered_entries
     }
 
-    fn clear_old_entries(&mut self, older_than_hours: u64) {
-        let cutoff_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() - (older_than_hours * 3600);
-
-        self.entries.retain(|entry| {
-            // Parse timestamp and compare
-            if let Ok(entry_time) = parse_timestamp(&entry.timestamp) {
-                entry_time >= cutoff_time
-            } else {
-                true // Keep entries with unparseable timestamps
-            }
-        });
-    }
 }
 
 // Global log storage
@@ -141,10 +126,6 @@ fn broadcast_log_entry(level: &str, message: &str, source: &str) {
     subscribers.retain(|tx| tx.unbounded_send(entry_json.clone()).is_ok());
 }
 
-// Custom logger that captures logs
-pub struct LogCaptureLogger {
-    level: log::Level,
-}
 
 impl LogCaptureLogger {
     pub fn new(level: log::Level) -> Self {
@@ -308,18 +289,6 @@ fn parse_log_line(line: &str, source_file: &str) -> Option<LogEntry> {
     })
 }
 
-// Parse timestamp string to unix timestamp
-fn parse_timestamp(timestamp_str: &str) -> Result<u64, std::num::ParseIntError> {
-    // Try to parse as unix timestamp first
-    if let Ok(ts) = timestamp_str.parse::<u64>() {
-        return Ok(ts);
-    }
-
-    // Try to parse common timestamp formats
-    // This is a simplified parser - you might want to use a proper date parsing library
-    Ok(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs())
-}
-
 // Get current timestamp as string
 fn get_current_timestamp() -> String {
     let now = SystemTime::now()
@@ -358,7 +327,7 @@ fn escape_html_preserve_unicode(text: &str) -> String {
 }
 
 // Generate the logs admin panel HTML
-fn generate_logs_panel(admin_key: &str, filter: Option<&str>, level_filter: Option<&str>, limit: Option<usize>) -> String {
+fn generate_logs_panel(_admin_key: &str, filter: Option<&str>, level_filter: Option<&str>, limit: Option<usize>) -> String {
     let mut html = String::new();
 
     html.push_str("<!DOCTYPE html>\n");

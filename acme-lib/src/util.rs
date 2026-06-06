@@ -1,6 +1,6 @@
 use base64::Engine;
 use serde::de::DeserializeOwned;
-use crate::req::{Response, Body};
+use crate::req::Response;
 
 use crate::req::req_safe_read_body;
 use crate::Result;

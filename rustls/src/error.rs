@@ -6,7 +6,6 @@ use core::fmt;
 use std::time::SystemTimeError;
 
 use pki_types::{AlgorithmIdentifier, EchConfigListBytes, ServerName, UnixTime};
-use webpki::ExtendedKeyUsage;
 
 use crate::enums::{AlertDescription, ContentType, HandshakeType};
 use crate::msgs::handshake::{EchConfigPayload, KeyExchangeAlgorithm};
@@ -810,17 +809,6 @@ pub enum ExtendedKeyPurpose {
     ///
     /// Represented here as a `Vec<usize>` for human readability.
     Other(Vec<usize>),
-}
-
-impl ExtendedKeyPurpose {
-    pub(crate) fn for_values(values: impl Iterator<Item = usize>) -> Self {
-        let values = values.collect::<Vec<_>>();
-        match &*values {
-            ExtendedKeyUsage::CLIENT_AUTH_REPR => Self::ClientAuth,
-            ExtendedKeyUsage::SERVER_AUTH_REPR => Self::ServerAuth,
-            _ => Self::Other(values),
-        }
-    }
 }
 
 impl fmt::Display for ExtendedKeyPurpose {

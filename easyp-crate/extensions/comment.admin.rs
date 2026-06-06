@@ -277,7 +277,7 @@ fn reject_comment(comment: &str) -> Result<(), String> {
 // Remove comment from processing file
 
 // Generate success page with stats
-fn generate_success_page(accepted_count: usize, rejected_count: usize, admin_key: &str) -> Result<String, String> {
+fn generate_success_page(accepted_count: usize, rejected_count: usize, _admin_key: &str) -> Result<String, String> {
     let mut html = String::new();
     
     html.push_str("<!DOCTYPE html>\n");
@@ -368,7 +368,7 @@ fn get_last_lines(file_path: &str, n: usize) -> Result<Vec<String>, String> {
 }
 
 // Generate admin panel HTML
-fn generate_admin_panel(comments: &[String], admin_key: &str) -> String {
+fn generate_admin_panel(comments: &[String], _admin_key: &str) -> String {
     let mut html = String::new();
     
     html.push_str("<!DOCTYPE html>\n");

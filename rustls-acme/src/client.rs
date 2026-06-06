@@ -78,7 +78,7 @@ impl AcmeClient {
 
         // Create or load account with fallback for private key format issues
         println!("🔍 Attempting to load ACME account for: {}", self.config.email);
-        let account = match dir.account(&self.config.email) {
+        let _account = match dir.account(&self.config.email) {
             Ok(account) => {
                 println!("✅ ACME account loaded successfully for email: {}", self.config.email);
                 account
@@ -295,7 +295,7 @@ impl AcmeClient {
             // Wait for the challenge to be validated by polling
             loop {
                 order.refresh()?;
-                if let Some(ord_csr) = order.confirm_validations() {
+                if let Some(_ord_csr) = order.confirm_validations() {
                     println!("✅ HTTP-01 challenge validated for domain: {}", domain);
                     
                     // Clean up the challenge from storage after successful validation
@@ -588,11 +588,6 @@ impl AcmeClient {
         }
         
         Ok(())
-    }
-
-    /// Get email for domain (simplified)
-    fn get_email_for_domain(&self, domain: &str) -> String {
-        format!("webmaster@{}", domain)
     }
 
     /// Convert acme-lib Certificate to rustls CertifiedKey

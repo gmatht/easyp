@@ -21,7 +21,7 @@ use rustls_pki_types::PrivateKeyDer;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use crate::req::{Response, Body};
+use crate::req::Response;
 
 use crate::acc::AccountInner;
 use crate::api::{ApiAuth, ApiEmptyString, ApiFinalize, ApiOrder};

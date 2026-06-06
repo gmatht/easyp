@@ -91,10 +91,10 @@ fn format_timestamp(timestamp: u64) -> String {
     use std::time::{SystemTime, UNIX_EPOCH, Duration};
 
     let datetime = UNIX_EPOCH + Duration::from_secs(timestamp);
-    let system_time = SystemTime::from(datetime);
+    let _system_time = SystemTime::from(datetime);
 
     // Simple formatting - in production you might want to use a proper date library
-    let days_since_epoch = timestamp / 86400;
+    let _days_since_epoch = timestamp / 86400;
     let seconds_today = timestamp % 86400;
     let hours = seconds_today / 3600;
     let minutes = (seconds_today % 3600) / 60;

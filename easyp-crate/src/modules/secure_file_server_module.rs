@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf, Component};
-use std::time::{SystemTime, UNIX_EPOCH, Duration};
+use std::time::Duration;
 
 use super::http_version::HttpVersion;
 use super::http_response::HttpResponse;
@@ -169,6 +169,7 @@ pub struct SecurityConfig {
     /// Maximum number of requests per Keep-Alive connection
     pub keep_alive_max_requests: usize,
     /// Minimum HTTP version to support
+    #[allow(dead_code)]
     pub minimum_http_version: HttpVersion,
 }
 

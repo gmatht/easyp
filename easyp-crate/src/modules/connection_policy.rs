@@ -3,18 +3,25 @@
 //! This module handles Keep-Alive decisions based on HTTP version and request headers.
 
 use super::http_version::HttpVersion;
+use std::time::{Duration, Instant};
 
 /// Connection policy for determining Keep-Alive behavior
 #[derive(Debug, Clone)]
 pub struct ConnectionPolicy {
     /// Maximum number of requests per connection
     pub max_requests: usize,
+    /// Maximum time to keep a connection alive
+    pub keep_alive_timeout: Duration,
+    /// When this connection was created
+    pub created_at: Instant,
 }
 
 impl Default for ConnectionPolicy {
     fn default() -> Self {
         Self {
             max_requests: 100,
+            keep_alive_timeout: Duration::from_secs(5),
+            created_at: Instant::now(),
         }
     }
 }
@@ -24,12 +31,15 @@ impl ConnectionPolicy {
     ///
     /// # Arguments
     /// * `max_requests` - Maximum number of requests per connection
+    /// * `keep_alive_timeout` - Maximum time to keep a connection alive
     ///
     /// # Returns
     /// * `ConnectionPolicy` - New connection policy
-    pub fn new(max_requests: usize) -> Self {
+    pub fn new(max_requests: usize, keep_alive_timeout: Duration) -> Self {
         Self {
             max_requests,
+            keep_alive_timeout,
+            created_at: Instant::now(),
         }
     }
 
@@ -50,6 +60,11 @@ impl ConnectionPolicy {
         response_size: usize,
         request_count: usize,
     ) -> bool {
+        // Check if the connection has exceeded the keep-alive timeout
+        if self.created_at.elapsed() >= self.keep_alive_timeout {
+            return false;
+        }
+
         // Check if we've exceeded the maximum number of requests
         if request_count >= self.max_requests {
             return false;
@@ -148,7 +163,7 @@ mod tests {
 
     #[test]
     fn test_max_requests_limit() {
-        let policy = ConnectionPolicy::new(5, 10);
+        let policy = ConnectionPolicy::new(5, Duration::from_secs(10));
         assert!(policy.should_keep_alive(&HttpVersion::Http11, None, 1000, 4));
         assert!(!policy.should_keep_alive(&HttpVersion::Http11, None, 1000, 5));
         assert!(!policy.should_keep_alive(&HttpVersion::Http11, None, 1000, 6));
