@@ -612,6 +612,16 @@ impl OnDemandHttpsServer {
                 // Use the pre-drop check result from earlier.
 
                  // Ensure self-signed certificate is available, then create SNI fallback
+                 // First, verify OpenSSL version is supported
+                 if let Some(ssl) = crate::openssl_global() {
+                     if let Some(ver) = ssl.version() {
+                         println!("OpenSSL version: {}", ver);
+                     }
+                     println!("OpenSSL variant: {:?}", ssl.variant);
+                 } else {
+                     println!("⚠️  Failed to load OpenSSL/LibreSSL. Ensure OpenSSL 1.1+ or LibreSSL 3.7+ is installed.");
+                     return Err("No supported SSL library found. OpenSSL ≥1.1 or LibreSSL ≥3.7 required.".into());
+                 }
                  let (cert_path, key_path) = ensure_self_signed_cert("localhost", &args.cache_dir)?;
                  let (sni_x509, sni_pkey) = load_self_signed_ptrs(&cert_path, &key_path)?;
                  let sni_fallback = Arc::new(SniFallback {

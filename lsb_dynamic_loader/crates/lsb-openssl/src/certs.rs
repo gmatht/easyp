@@ -15,8 +15,8 @@ struct X509Ffi {
     x509_get_serial_number: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
     asn1_integer_set: unsafe extern "C" fn(*mut c_void, i64) -> c_int,
     x509_gmtime_adj: unsafe extern "C" fn(*mut c_void, i64) -> *mut c_void,
-    x509_get_m_not_before: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
-    x509_get_m_not_after: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
+    x509_get_m_not_before: Option<unsafe extern "C" fn(*mut c_void) -> *mut c_void>,
+    x509_get_m_not_after: Option<unsafe extern "C" fn(*mut c_void) -> *mut c_void>,
     x509_set_pubkey: unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int,
     x509_name_new: unsafe extern "C" fn() -> *mut c_void,
     x509_name_free: unsafe extern "C" fn(*mut c_void),
@@ -41,14 +41,16 @@ struct X509Ffi {
     i2d_x509: unsafe extern "C" fn(*mut c_void, *mut *mut u8) -> c_int,
     #[allow(dead_code)]
     i2d_x509_bio: unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int,
-    i2d_pkcs8_private_key_bio: unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int,
+    // On x86_64 SysV ABI, the 7-arg form works for all OpenSSL versions
+    // (extra register args are safely ignored by older 2-arg implementations)
+    i2d_pkcs8_private_key_bio: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void, *mut u8, c_int, *mut c_void, *mut c_void) -> c_int>,
     ec_key_new_by_curve_name: unsafe extern "C" fn(c_int) -> *mut c_void,
     ec_key_free: unsafe extern "C" fn(*mut c_void),
     ec_key_generate_key: unsafe extern "C" fn(*mut c_void) -> c_int,
     evp_pkey_new: unsafe extern "C" fn() -> *mut c_void,
     evp_pkey_free: unsafe extern "C" fn(*mut c_void),
     evp_pkey_set1_ec_key: unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int,
-    crypto_free: unsafe extern "C" fn(*mut c_void),
+    // Use libc::free instead of CRYPTO_free (API changed in OpenSSL 3.5)
     // EVP_DigestSign (for ECDSA signing)
     evp_digest_sign_init: unsafe extern "C" fn(*mut *mut c_void, *mut *mut c_void, *const c_void, *mut *mut c_void) -> c_int,
     evp_digest_sign: unsafe extern "C" fn(*mut c_void, *mut u8, *mut usize, *const u8, usize) -> c_int,
@@ -97,8 +99,11 @@ impl X509Ffi {
             let p_x509_get_serial_number = s!("X509_get_serialNumber");
             let p_asn1_integer_set = s!("ASN1_INTEGER_set");
             let p_x509_gmtime_adj = s!("X509_gmtime_adj");
-            let p_x509_get_m_not_before = s!("X509_getm_notBefore");
-            let p_x509_get_m_not_after = s!("X509_getm_notAfter");
+            // X509_getm_notBefore/After (OpenSSL 1.1+) with X509_get_notBefore/After fallback (1.0.x)
+            let p_x509_get_m_not_before = lib.get_symbol_raw("X509_getm_notBefore")
+                .or_else(|_| lib.get_symbol_raw("X509_get_notBefore")).ok();
+            let p_x509_get_m_not_after = lib.get_symbol_raw("X509_getm_notAfter")
+                .or_else(|_| lib.get_symbol_raw("X509_get_notAfter")).ok();
             let p_x509_set_pubkey = s!("X509_set_pubkey");
             let p_x509_name_new = s!("X509_NAME_new");
             let p_x509_name_free = s!("X509_NAME_free");
@@ -121,14 +126,15 @@ impl X509Ffi {
             let p_bio_write = s!("BIO_write");
             let p_i2d_x509 = s!("i2d_X509");
             let p_i2d_x509_bio = s!("i2d_X509_bio");
-            let p_i2d_pkcs8_private_key_bio = s!("i2d_PKCS8PrivateKey_bio");
+            // On x86_64 SysV ABI, the 7-arg form works for all OpenSSL versions
+            let p_i2d_pkcs8_private_key_bio = lib.get_symbol_raw("i2d_PKCS8PrivateKey_bio").ok()
+                .map(|p| unsafe { std::mem::transmute::<_, unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void, *mut u8, c_int, *mut c_void, *mut c_void) -> c_int>(p) });
             let p_ec_key_new_by_curve_name = s!("EC_KEY_new_by_curve_name");
             let p_ec_key_free = s!("EC_KEY_free");
             let p_ec_key_generate_key = s!("EC_KEY_generate_key");
             let p_evp_pkey_new = s!("EVP_PKEY_new");
             let p_evp_pkey_free = s!("EVP_PKEY_free");
             let p_evp_pkey_set1_ec_key = s!("EVP_PKEY_set1_EC_KEY");
-            let p_crypto_free = s!("CRYPTO_free");
             let p_evp_digest_sign_init = s!("EVP_DigestSignInit");
             let p_evp_digest_sign = s!("EVP_DigestSign");
             let p_evp_md_ctx_free = s!("EVP_MD_CTX_free");
@@ -167,8 +173,8 @@ impl X509Ffi {
                 x509_get_serial_number: std::mem::transmute(p_x509_get_serial_number),
                 asn1_integer_set: std::mem::transmute(p_asn1_integer_set),
                 x509_gmtime_adj: std::mem::transmute(p_x509_gmtime_adj),
-                x509_get_m_not_before: std::mem::transmute(p_x509_get_m_not_before),
-                x509_get_m_not_after: std::mem::transmute(p_x509_get_m_not_after),
+                x509_get_m_not_before: p_x509_get_m_not_before.map(|p| unsafe { std::mem::transmute(p) }),
+                x509_get_m_not_after: p_x509_get_m_not_after.map(|p| unsafe { std::mem::transmute(p) }),
                 x509_set_pubkey: std::mem::transmute(p_x509_set_pubkey),
                 x509_name_new: std::mem::transmute(p_x509_name_new), x509_name_free: std::mem::transmute(p_x509_name_free),
                 x509_name_add_entry_by_txt: std::mem::transmute(p_x509_name_add_entry_by_txt),
@@ -190,13 +196,12 @@ impl X509Ffi {
                 bio_write: std::mem::transmute(p_bio_write),
                 i2d_x509: std::mem::transmute(p_i2d_x509),
                 i2d_x509_bio: std::mem::transmute(p_i2d_x509_bio),
-                i2d_pkcs8_private_key_bio: std::mem::transmute(p_i2d_pkcs8_private_key_bio),
+                i2d_pkcs8_private_key_bio: p_i2d_pkcs8_private_key_bio,
                 ec_key_new_by_curve_name: std::mem::transmute(p_ec_key_new_by_curve_name),
                 ec_key_free: std::mem::transmute(p_ec_key_free),
                 ec_key_generate_key: std::mem::transmute(p_ec_key_generate_key),
                 evp_pkey_new: std::mem::transmute(p_evp_pkey_new), evp_pkey_free: std::mem::transmute(p_evp_pkey_free),
                 evp_pkey_set1_ec_key: std::mem::transmute(p_evp_pkey_set1_ec_key),
-                crypto_free: std::mem::transmute(p_crypto_free),
                 evp_digest_sign_init: std::mem::transmute(p_evp_digest_sign_init),
                 evp_digest_sign: std::mem::transmute(p_evp_digest_sign),
                 evp_md_ctx_free: std::mem::transmute(p_evp_md_ctx_free),
@@ -254,7 +259,9 @@ fn create_ec_key(curve_name: &str) -> Result<Vec<u8>, SslError> {
         // DER encode as PKCS8
         let bio_s_mem = (ffi.bio_s_mem)();
         let bio = (ffi.bio_new)(bio_s_mem);
-        (ffi.i2d_pkcs8_private_key_bio)(bio, pkey);
+        if let Some(pkcs8) = ffi.i2d_pkcs8_private_key_bio {
+            pkcs8(bio, pkey, std::ptr::null_mut(), std::ptr::null_mut(), 0, std::ptr::null_mut(), std::ptr::null_mut());
+        }
         let mut buf = vec![0u8; 4096];
         let n = (ffi.bio_read)(bio, buf.as_mut_ptr() as *mut c_void, 4096);
         (ffi.bio_free)(bio);
@@ -450,8 +457,8 @@ unsafe fn gen_inner(
     (f.x509_set_version)(x509, 2); // X509v3
     let serial = (f.x509_get_serial_number)(x509);
     (f.asn1_integer_set)(serial, 1);
-    (f.x509_gmtime_adj)((f.x509_get_m_not_before)(x509), 0);
-    (f.x509_gmtime_adj)((f.x509_get_m_not_after)(x509), 365 * 24 * 3600);
+    if let Some(gmfb) = f.x509_get_m_not_before { (f.x509_gmtime_adj)(gmfb(x509), 0); }
+    if let Some(gmfa) = f.x509_get_m_not_after { (f.x509_gmtime_adj)(gmfa(x509), 365 * 24 * 3600); }
     (f.x509_set_pubkey)(x509, pkey);
 
     // ── Distinguished Name ──
@@ -478,19 +485,20 @@ unsafe fn gen_inner(
         return Err(SslError::Other("X509_sign".into()));
     }
 
-    // ── DER encode certificate ──
-    let mut cert_der_ptr: *mut u8 = std::ptr::null_mut();
-    let cert_der_len = (f.i2d_x509)(x509, &mut cert_der_ptr);
-    let cert_der = if cert_der_len > 0 && !cert_der_ptr.is_null() {
-        let v = std::slice::from_raw_parts(cert_der_ptr, cert_der_len as usize).to_vec();
-        (f.crypto_free)(cert_der_ptr as *mut c_void);
-        v
-    } else { Vec::new() };
-
-    // ── DER encode private key ──
+    // ── DER encode certificate (via BIO so OpenSSL manages memory) ──
     let bio_s_mem = (f.bio_s_mem)();
+    let cert_bio = (f.bio_new)(bio_s_mem);
+    (f.i2d_x509_bio)(cert_bio, x509);
+    let mut cert_der = vec![0u8; 4096];
+    let n = (f.bio_read)(cert_bio, cert_der.as_mut_ptr() as *mut c_void, 4096);
+    (f.bio_free)(cert_bio);
+    cert_der.truncate(if n > 0 { n as usize } else { 0 });
+
+    // ── DER encode private key (unencrypted PKCS#8) ──
     let bio = (f.bio_new)(bio_s_mem);
-    (f.i2d_pkcs8_private_key_bio)(bio, pkey);
+    if let Some(pkcs8) = f.i2d_pkcs8_private_key_bio {
+        pkcs8(bio, pkey, std::ptr::null_mut(), std::ptr::null_mut(), 0, std::ptr::null_mut(), std::ptr::null_mut());
+    }
     let mut key_der = vec![0u8; 4096];
     let n = (f.bio_read)(bio, key_der.as_mut_ptr() as *mut c_void, 4096);
     (f.bio_free)(bio);
