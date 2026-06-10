@@ -622,7 +622,18 @@ impl OnDemandHttpsServer {
                      println!("⚠️  Failed to load OpenSSL/LibreSSL. Ensure OpenSSL 1.1+ or LibreSSL 3.7+ is installed.");
                      return Err("No supported SSL library found. OpenSSL ≥1.1 or LibreSSL ≥3.7 required.".into());
                  }
-                 let (cert_path, key_path) = ensure_self_signed_cert("localhost", &args.cache_dir)?;
+                 let (cert_path, key_path) = ensure_self_signed_cert("localhost", &args.cache_dir)
+                     .map_err(|e| {
+                         let hint = if e.to_string().contains("sym:") {
+                             let variant = crate::openssl_global()
+                                 .map(|s| format!("{:?}", s.variant))
+                                 .unwrap_or_else(|| "unknown".into());
+                             format!(
+                                 "\n  → Your SSL library ({}) is too old for this build.\n  → OpenSSL ≥1.1 or LibreSSL ≥3.7 required.\n  → Install a newer OpenSSL or use a different SSL backend.",
+                                 variant)
+                         } else { String::new() };
+                         format!("{}{}", e, hint)
+                     })?;
                  let (sni_x509, sni_pkey) = load_self_signed_ptrs(&cert_path, &key_path)?;
                  let sni_fallback = Arc::new(SniFallback {
                      fallback_x509: sni_x509,
