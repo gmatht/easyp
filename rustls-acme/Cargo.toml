@@ -16,7 +16,7 @@ autotests = false
 acme-lib = { path = "../acme-lib" }
 
         # rustls for trait implementations
-        rustls = { path = "../rustls", default-features = false, features = ["log", "std"] }
+        rustls = { path = "../rustls", default-features = true }
 
         # LSB OpenSSL runtime loader (for certificate generation)
         lsb-openssl = { path = "../lsb_dynamic_loader/crates/lsb-openssl" }

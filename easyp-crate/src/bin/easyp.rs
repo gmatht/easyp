@@ -28,7 +28,7 @@ use std::time::Duration;
 
 // Runtime ACME client (still depends on acme-lib, no rustls types)
 #[cfg(feature = "acme")]
-use rustls_acme::AcmeClient;
+use rustls_acme::{AcmeClient, AcmeConfig, ChallengeType};
 
 // Import enhanced error reporting
 #[path = "../modules/enhanced_error.rs"]
@@ -347,6 +347,19 @@ struct SniFallback {
     ptr_cache: std::sync::RwLock<HashMap<String, (*mut std::ffi::c_void, *mut std::ffi::c_void)>>,
 }
 
+impl SniFallback {
+    /// Cache a certificate from PEM strings so future SNI callbacks can serve it.
+    fn cache_cert(&self, hostname: &str, cert_pem: &str, key_pem: &str) {
+        if let Ok(x509) = lsb_openssl::certs::pem_read_certificate(cert_pem) {
+            if let Ok(pkey) = lsb_openssl::certs::pem_read_private_key(key_pem) {
+                if let Ok(mut cache) = self.ptr_cache.write() {
+                    cache.insert(hostname.to_string(), (x509, pkey));
+                }
+            }
+        }
+    }
+}
+
 unsafe impl Send for SniFallback {}
 unsafe impl Sync for SniFallback {}
 
@@ -634,15 +647,98 @@ impl OnDemandHttpsServer {
                          } else { String::new() };
                          format!("{}{}", e, hint)
                      })?;
-                 let (sni_x509, sni_pkey) = load_self_signed_ptrs(&cert_path, &key_path)?;
-                 let sni_fallback = Arc::new(SniFallback {
-                     fallback_x509: sni_x509,
-                     fallback_pkey: sni_pkey,
-                     ptr_cache: std::sync::RwLock::new(HashMap::new()),
-                 });
+                  let (sni_x509, sni_pkey) = load_self_signed_ptrs(&cert_path, &key_path)?;
+                  let sni_fallback = Arc::new(SniFallback {
+                      fallback_x509: sni_x509,
+                      fallback_pkey: sni_pkey,
+                      ptr_cache: std::sync::RwLock::new(HashMap::new()),
+                  });
 
-                 #[cfg(feature = "acme")]
-                 let acme_client: Option<Arc<AcmeClient>> = None;
+                  // Load any existing staging/production certs from disk cache
+                  for domain in &args.domains {
+                      if domain == "localhost" { continue; }
+                      let domain_dir = format!("{}/{}", args.cache_dir, domain);
+                      let cert_file = format!("{}/fullchain.pem", domain_dir);
+                      let key_file = format!("{}/privkey.pem", domain_dir);
+                      if std::path::Path::new(&cert_file).exists() && std::path::Path::new(&key_file).exists() {
+                          if let Ok(cert_pem) = std::fs::read_to_string(&cert_file) {
+                              if let Ok(key_pem) = std::fs::read_to_string(&key_file) {
+                                  sni_fallback.cache_cert(domain, &cert_pem, &key_pem);
+                                  println!("✅ Loaded cached cert for {} from disk", domain);
+                              }
+                          }
+                      }
+                  }
+ 
+                  #[cfg(feature = "acme")]
+                 let acme_client: Option<Arc<AcmeClient>> = {
+                     if args.domains.is_empty() {
+                         println!("ℹ️  No domains configured, skipping ACME (using self-signed certs)");
+                         None
+                     } else {
+                         let email = args.email.clone()
+                             .or_else(|| args.acme_email.clone())
+                             .unwrap_or_else(|| format!("webmaster@{}", args.domains[0]));
+                         let directory_url = if args.staging {
+                             "https://acme-staging-v02.api.letsencrypt.org/directory".to_string()
+                         } else {
+                             args.acme_directory.clone()
+                         };
+                         let config = AcmeConfig {
+                             directory_url,
+                             email,
+                             allowed_ips: allowed_ips.clone(),
+                             challenge_type: ChallengeType::Http01(String::new(), String::new()),
+                             cache_dir: Some(args.cache_dir.clone()),
+                             renewal_threshold_days: 30,
+                             is_staging: args.staging,
+                             bogus_domain: None,
+                         };
+                          let client = Arc::new(rustls_acme::AcmeClient::new(config));
+                          // Account init runs now (before privilege drop) so it can write to /var/lib/easyp
+                          match client.initialize_account().await {
+                              Ok(()) => {
+                                  println!("✅ ACME account initialized ({})", if args.staging { "staging" } else { "production" });
+                                  // Ensure ACME data is accessible by www-data after privilege drop
+                                  if is_running_as_root() {
+                                      let _ = std::process::Command::new("chown")
+                                          .args(&["-R", &format!("{}:{}", www_data_uid, www_data_gid),
+                                              &format!("{}/acme_lib", args.cache_dir)])
+                                          .output();
+                                  }
+                                  let sni_fallback_clone = sni_fallback.clone();
+                                  let client_clone = client.clone();
+                                  let domains = args.domains.clone();
+                                  // Cert requests (including challenge validation) deferred to a dedicated
+                                  // OS thread so synchronous I/O (minreq, thread::sleep) doesn't stall
+                                  // the async executor that handles HTTP-01 challenges and HTTPS requests.
+                                  std::thread::spawn(move || {
+                                      smol::block_on(async move {
+                                          for domain in &domains {
+                                              if domain == "localhost" { continue; }
+                                              println!("🔍 Requesting certificate for: {}", domain);
+                                              match client_clone.get_certificate_pem(domain).await {
+                                                  Ok((cert_pem, key_pem)) => {
+                                                      println!("✅ Certificate obtained for: {}", domain);
+                                                      sni_fallback_clone.cache_cert(domain, &cert_pem, &key_pem);
+                                                  }
+                                                  Err(e) => {
+                                                      eprintln!("⚠️  Failed to obtain cert for {}: {}", domain, e);
+                                                  }
+                                              }
+                                          }
+                                      });
+                                  });
+                                  Some(client)
+                              }
+                              Err(e) => {
+                                  eprintln!("⚠️  ACME account initialization failed: {}", e);
+                                  println!("ℹ️  Continuing with self-signed certificates");
+                               None
+                               }
+                           }
+                      }
+                  };
                  #[cfg(not(feature = "acme"))]
                  let acme_client = std::option::Option::<std::sync::Arc<()>>::None;
 
@@ -973,9 +1069,16 @@ impl OnDemandHttpsServer {
         if let Some(first_line) = lines.first() {
             println!("HTTP Request: {}", first_line);
 
-            // Handle HTTP-01 ACME challenges
+            // Handle HTTP-01 ACME challenges; if not found, fall through to file server
             if first_line.starts_with("GET /.well-known/acme-challenge/") {
-                return Self::handle_acme_challenge_http(stream, first_line, &acme_client, &http_challenges).await;
+                #[cfg(feature = "acme")]
+                let found = Self::handle_acme_challenge_http(&mut stream, first_line, &acme_client, &http_challenges).await?;
+                #[cfg(not(feature = "acme"))]
+                let found = Self::handle_acme_challenge_http(&mut stream, first_line, &http_challenges).await?;
+                if found {
+                    return Ok(());
+                }
+                // Not found in ACME storage — continue to file server (supports certbot --webroot)
             }
         }
 
@@ -1857,12 +1960,14 @@ impl OnDemandHttpsServer {
     }
 
     /// Handle HTTP-01 ACME challenge over HTTP (port 80)
+    /// Returns `true` if the challenge token was found and served.
     async fn handle_acme_challenge_http(
-        mut stream: async_io::Async<std::net::TcpStream>,
+        stream: &mut async_io::Async<std::net::TcpStream>,
         request_line: &str,
+        #[cfg(feature = "acme")]
         acme_client: &Option<Arc<AcmeClient>>,
         http_challenges: &Arc<Mutex<BTreeMap<String, String>>>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
         // Extract token from request path
         // GET /.well-known/acme-challenge/{token} HTTP/1.1
         let path = request_line.split_whitespace().nth(1).unwrap_or("");
@@ -1871,12 +1976,24 @@ impl OnDemandHttpsServer {
         println!("ACME HTTP-01 challenge request for token: {}", token);
 
         // Look up the key authorization for this token
-        let key_authorization = {
+        #[allow(unused_mut)]
+        let mut key_authorization = None;
+        #[cfg(feature = "acme")]
+        {
+            key_authorization = if let Some(acme) = acme_client {
+                acme.get_challenge_response(token).await
+            } else {
+                let challenges = http_challenges.lock().unwrap();
+                challenges.get(token).cloned()
+            };
+        }
+        #[cfg(not(feature = "acme"))]
+        {
             let challenges = http_challenges.lock().unwrap();
-            challenges.get(token).cloned()
-        };
+            key_authorization = challenges.get(token).cloned();
+        }
 
-        let response = if let Some(key_auth) = key_authorization {
+        if let Some(key_auth) = key_authorization {
             println!("Serving challenge response for token: {}", token);
 
             // Use HttpResponse builder for version-aware response (default to HTTP/1.1 for HTTP)
@@ -1885,24 +2002,14 @@ impl OnDemandHttpsServer {
             response.set_content_length();
             response.set_cache_control("no-cache");
 
-            let response_bytes = response.encode(&HttpVersion::Http11, false); // Default to close for HTTP
-            response_bytes
+            let response_bytes = response.encode(&HttpVersion::Http11, false);
+            stream.write_all(&response_bytes).await?;
+            stream.flush().await?;
+            Ok(true)
         } else {
             println!("Challenge token not found: {}", token);
-
-            // Use HttpResponse builder for version-aware response (default to HTTP/1.1 for HTTP)
-            let mut response = HttpResponse::not_found(b"Not Found".to_vec());
-            response.set_content_type("text/plain");
-            response.set_content_length();
-
-            let response_bytes = response.encode(&HttpVersion::Http11, false); // Default to close for HTTP
-            response_bytes
-        };
-
-        stream.write_all(&response).await?;
-        stream.flush().await?;
-
-        Ok(())
+            Ok(false)
+        }
     }
 
 

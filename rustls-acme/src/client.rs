@@ -21,6 +21,7 @@ use event_listener::Event;
 pub struct AcmeClient {
     config: AcmeConfig,
     certificate_cache: Arc<RwLock<HashMap<String, CachedCertificate>>>,
+    certificate_pem_cache: Arc<RwLock<HashMap<String, (String, String)>>>,
     challenge_storage: Arc<RwLock<HashMap<String, ChallengeData>>>,
     certificate_requests: Arc<Mutex<HashMap<String, Arc<Event>>>>,
 }
@@ -30,6 +31,7 @@ impl AcmeClient {
     pub fn new(config: AcmeConfig) -> Self {
         Self {
             certificate_cache: Arc::new(RwLock::new(HashMap::new())),
+            certificate_pem_cache: Arc::new(RwLock::new(HashMap::new())),
             challenge_storage: Arc::new(RwLock::new(HashMap::new())),
             certificate_requests: Arc::new(Mutex::new(HashMap::new())),
             config,
@@ -261,49 +263,88 @@ impl AcmeClient {
             return Err(AcmeError::Client("No authorizations found".to_string()));
         }
         
-        // Process each authorization
+        // Process each authorization (with retries for transient network errors)
         for authz in auth {
-            println!("🔍 Processing authorization for domain: {}", authz.domain_name());
+            println!("🔍 Processing authorization for domain: {} (need_challenge: {})", authz.domain_name(), authz.need_challenge());
             
-            // Get the HTTP-01 challenge
-            let challenge = authz.http_challenge();
-            println!("🔍 Found HTTP-01 challenge for domain: {}", domain);
-            
-            // Get the challenge data
-            let token = challenge.http_token();
-            let key_authorization = challenge.http_proof();
-            let token_string = token.to_string();
-            
-            // Store the challenge data for the HTTP server to serve
-            {
-                let mut storage = self.challenge_storage.write().await;
-                storage.insert(token_string.clone(), ChallengeData {
-                    token: token_string.clone(),
-                    key_authorization: key_authorization.clone(),
-                domain: domain.to_string(),
-                    challenge_type: ChallengeType::Http01(token_string.clone(), key_authorization.clone()),
-                });
+            if !authz.need_challenge() {
+                println!("✅ Authorization already valid for domain: {}", domain);
+                continue;
             }
             
-            println!("✅ Stored HTTP-01 challenge data for domain: {}", domain);
-            println!("🔍 Challenge token: {}", token);
-            println!("🔍 Key authorization: {}", key_authorization);
+            let auth_url = authz.api_auth().clone();
+            let max_retries = 5;
+            let mut validated = false;
             
-            // Tell the ACME server we're ready for the challenge
-            challenge.validate(5000)?; // 5 second timeout
+            for attempt in 1..=max_retries {
+                if attempt > 1 {
+                    println!("🔁 Retry {}/{} for domain: {}", attempt, max_retries, domain);
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                }
+                
+                // Get a fresh HTTP-01 challenge for this authorization
+                let challenge = match authz.http_challenge() {
+                    c => c,
+                };
+                
+                // Get the challenge data
+                let token = challenge.http_token();
+                let key_authorization = challenge.http_proof();
+                let token_string = token.to_string();
+                
+                // Store the challenge data for the HTTP server to serve
+                {
+                    let mut storage = self.challenge_storage.write().await;
+                    storage.insert(token_string.clone(), ChallengeData {
+                        token: token_string.clone(),
+                        key_authorization: key_authorization.clone(),
+                        domain: domain.to_string(),
+                        challenge_type: ChallengeType::Http01(token_string.clone(), key_authorization.clone()),
+                    });
+                }
+                
+                println!("✅ Stored HTTP-01 challenge data for domain: {}", domain);
+                println!("🔍 Challenge token: {}", token);
+                println!("🔍 Key authorization: {}", key_authorization);
+                
+                // Tell the ACME server we're ready for the challenge
+                let validation_result = challenge.validate(5000);
+                
+                // Clean up challenge from storage
+                {
+                    let mut storage = self.challenge_storage.write().await;
+                    storage.remove(&token_string);
+                }
+                
+                match validation_result {
+                    Ok(()) => {
+                        println!("✅ HTTP-01 challenge validated for domain: {}", domain);
+                        validated = true;
+                        break;
+                    }
+                    Err(e) => {
+                        let err_msg = format!("{}", e);
+                        println!("⚠️  Challenge validation attempt {}/{} failed for {}: {}", attempt, max_retries, domain, err_msg);
+                        
+                        if attempt == max_retries {
+                            return Err(AcmeError::Client(format!(
+                                "Challenge validation failed after {} attempts: {}", max_retries, err_msg
+                            )));
+                        }
+                    }
+                }
+            }
             
-            // Wait for the challenge to be validated by polling
+            if !validated {
+                // Should not reach here (returned error above), but just in case:
+                return Err(AcmeError::Client("Challenge validation failed".into()));
+            }
+            
+            // Wait for the order to confirm all validations
             loop {
                 order.refresh()?;
                 if let Some(_ord_csr) = order.confirm_validations() {
-                    println!("✅ HTTP-01 challenge validated for domain: {}", domain);
-                    
-                    // Clean up the challenge from storage after successful validation
-                    {
-                        let mut storage = self.challenge_storage.write().await;
-                        storage.remove(&token_string);
-                        println!("🧹 Cleaned up challenge for domain: {}", domain);
-                    }
+                    println!("✅ Order validations confirmed for domain: {}", domain);
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(1000));
@@ -325,6 +366,14 @@ impl AcmeClient {
         let cert = ord_cert.download_and_save_cert()?;
         
         println!("✅ Certificate obtained for domain: {}", domain);
+        
+        // Cache the PEM strings for use by external tools (e.g. easyp's raw OpenSSL SNI callback)
+        let cert_pem = cert.certificate().to_string();
+        let key_pem = cert.private_key().to_string();
+        {
+            let mut pem_cache = self.certificate_pem_cache.write().await;
+            pem_cache.insert(domain.to_string(), (cert_pem, key_pem));
+        }
         
         // Parse the certificate and convert to rustls format
         let certified_key = self.convert_certificate_to_certified_key(&cert, domain)?;
@@ -388,8 +437,17 @@ impl AcmeClient {
             Ok(Some(cert)) => {
                 println!("✅ Found existing certificate in acme-lib persistence for domain: {}", domain);
                 
+                // Cache PEM strings for raw OpenSSL use
+                {
+                    let cert_pem = cert.certificate().to_string();
+                    let key_pem = cert.private_key().to_string();
+                    let mut pem_cache = self.certificate_pem_cache.write().await;
+                    pem_cache.insert(domain.to_string(), (cert_pem, key_pem));
+                }
+                
                 // Convert acme-lib Certificate to rustls CertifiedKey
-                let certified_key = self.convert_certificate_to_certified_key(&cert, domain)?;
+        // Convert to CertifiedKey for the rustls-based cert cache.
+        let certified_key = self.convert_certificate_to_certified_key(&cert, domain)?;
                 println!("✅ Successfully loaded certificate from acme-lib persistence for domain: {}", domain);
                 return Ok(Some(certified_key));
             }
@@ -637,7 +695,9 @@ impl AcmeClient {
                 let p = rustls::crypto::CryptoProvider::from_crate_features()?;
                 Some(Box::leak(Box::new(Arc::new(p))))
             })
-            .expect("No CryptoProvider available — call CryptoProvider::install_default() or enable a rustls feature like 'ring'");
+            .ok_or_else(|| AcmeError::Client(
+                "No CryptoProvider available — enable a rustls feature like 'ring' or 'aws-lc-rs'".into()
+            ))?;
         println!("🔍 Creating CertifiedKey with {} certificates", cert_chain.len());
         
         // Debug: Print certificate details
@@ -656,6 +716,25 @@ impl AcmeClient {
 
         println!("✅ Successfully created CertifiedKey for domain: {}", domain);
         Ok(Arc::new(certified_key))
+    }
+
+    /// Get certificate and key as PEM strings for use with raw OpenSSL.
+    /// Returns (cert_pem, key_pem). Triggers ACME request if not yet cached.
+    pub async fn get_certificate_pem(&self, domain: &str) -> Result<(String, String), AcmeError> {
+        {
+            let cache = self.certificate_pem_cache.read().await;
+            if let Some(pem) = cache.get(domain) {
+                return Ok(pem.clone());
+            }
+        }
+        // Trigger cert acquisition — both request and persistence paths populate pem_cache
+        let _ = self.get_certificate(domain).await;
+        // Check PEM cache regardless of whether get_certificate succeeded
+        // (cert may have been cached even if CertifiedKey conversion failed)
+        let cache = self.certificate_pem_cache.read().await;
+        cache.get(domain).cloned().ok_or_else(|| {
+            AcmeError::Client("PEM not cached after certificate acquisition".into())
+        })
     }
 
     /// Get challenge response for HTTP-01 challenge
@@ -725,3 +804,4 @@ impl AcmeClient {
         Ok(0)
     }
 }
+

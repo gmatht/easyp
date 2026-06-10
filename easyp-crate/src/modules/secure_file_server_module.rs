@@ -339,8 +339,9 @@ impl SecureFileServer {
                     }
 
                     // Check for hidden files/directories (starting with .)
+                    // Exception: .well-known is needed for ACME HTTP-01 challenges
                     if let Some(comp_str) = comp.to_str() {
-                        if comp_str.starts_with('.') && comp_str != "." && comp_str != ".." {
+                        if comp_str.starts_with('.') && comp_str != "." && comp_str != ".." && comp_str != ".well-known" {
                             return Err("Access to hidden files/directories not allowed".into());
                         }
                     }
@@ -871,7 +872,7 @@ impl SecureFileServer {
                 </div>
                 <div class="info-card">
                     <h3>👤 Privilege Dropping</h3>
-                    <p>Drops to unprivileged user (nobody) after binding to privileged ports</p>
+                    <p>Drops to unprivileged user (www-data) after binding to privileged ports</p>
                 </div>
                 <div class="info-card">
                     <h3>🔗 Path Canonicalization</h3>

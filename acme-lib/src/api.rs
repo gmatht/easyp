@@ -304,6 +304,7 @@ pub struct ApiChallenge {
     #[serde(rename = "type")]
     pub _type: String,
     pub status: String,
+    #[serde(default)]
     pub token: String,
     pub validated: Option<String>,
     pub error: Option<ApiProblem>,

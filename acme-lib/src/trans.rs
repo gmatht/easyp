@@ -222,5 +222,7 @@ fn jws_with<T: Serialize + ?Sized>(
 
     let jws = Jws::new(protected, payload, signature);
 
-    Ok(serde_json::to_string(&jws)?)
+    let jws_str = serde_json::to_string(&jws)?;
+    eprintln!("🔍 ACME-LIB: JWS payload: {}", jws_str);
+    Ok(jws_str)
 }

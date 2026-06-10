@@ -52,7 +52,8 @@ struct X509Ffi {
     evp_pkey_set1_ec_key: unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int,
     // Use libc::free instead of CRYPTO_free (API changed in OpenSSL 3.5)
     // EVP_DigestSign (for ECDSA signing)
-    evp_digest_sign_init: unsafe extern "C" fn(*mut *mut c_void, *mut *mut c_void, *const c_void, *mut *mut c_void) -> c_int,
+    // EVP_DigestSignInit(ctx, pctx, type, e, pkey) — 5 args on x86_64 SysV
+    evp_digest_sign_init: unsafe extern "C" fn(*mut *mut c_void, *mut *mut c_void, *const c_void, *mut c_void, *mut c_void) -> c_int,
     evp_digest_sign: unsafe extern "C" fn(*mut c_void, *mut u8, *mut usize, *const u8, usize) -> c_int,
     evp_md_ctx_free: unsafe extern "C" fn(*mut c_void),
     evp_md_ctx_new: unsafe extern "C" fn() -> *mut c_void,
@@ -63,7 +64,13 @@ struct X509Ffi {
     evp_pkey_get1_ec_key: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
     ec_key_get0_group: unsafe extern "C" fn(*const c_void) -> *const c_void,
     ec_key_get0_public_key: unsafe extern "C" fn(*const c_void) -> *const c_void,
-    ec_point_to_oct: unsafe extern "C" fn(*const c_void, *const c_void, *mut u8, usize, *mut c_void) -> usize,
+    ec_point_to_oct: unsafe extern "C" fn(*const c_void, *const c_void, c_int, *mut u8, usize, *mut c_void) -> usize,
+    ecdsa_do_sign: unsafe extern "C" fn(*const u8, c_int, *mut c_void) -> *mut c_void,
+    ecdsa_sig_get0_r: unsafe extern "C" fn(*const c_void) -> *const c_void,
+    ecdsa_sig_get0_s: unsafe extern "C" fn(*const c_void) -> *const c_void,
+    ecdsa_sig_free: unsafe extern "C" fn(*mut c_void),
+    bn_num_bits: unsafe extern "C" fn(*const c_void) -> c_int,
+    bn_bn2binpad: unsafe extern "C" fn(*const c_void, *mut u8, c_int) -> c_int,
     // PEM read
     pem_read_bio_x509: unsafe extern "C" fn(*mut c_void, *mut *mut c_void, *mut c_void, *mut c_void) -> *mut c_void,
     pem_read_bio_private_key: unsafe extern "C" fn(*mut c_void, *mut *mut c_void, *mut c_void, *mut c_void) -> *mut c_void,
@@ -85,8 +92,22 @@ struct X509Ffi {
     obj_txt2nid: unsafe extern "C" fn(*const c_char) -> c_int,
 }
 
+use std::sync::OnceLock;
+
+static X509_FFI: OnceLock<Result<X509Ffi, &'static str>> = OnceLock::new();
+
 impl X509Ffi {
-    fn load() -> Result<Self, &'static str> {
+    fn load() -> Result<&'static Self, &'static str> {
+        let result: &Result<X509Ffi, &str> = X509_FFI.get_or_init(|| {
+            Self::try_load()
+        });
+        match result {
+            Ok(ffi) => Ok(ffi),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn try_load() -> Result<Self, &'static str> {
         unsafe {
             let lib = load_libcrypto().map_err(|_| "failed to load libcrypto")?;
             macro_rules! s { ($n:literal) => {
@@ -146,6 +167,12 @@ impl X509Ffi {
             let p_ec_key_get0_group = s!("EC_KEY_get0_group");
             let p_ec_key_get0_public_key = s!("EC_KEY_get0_public_key");
             let p_ec_point_to_oct = s!("EC_POINT_point2oct");
+            let p_ecdsa_do_sign = s!("ECDSA_do_sign");
+            let p_ecdsa_sig_get0_r = s!("ECDSA_SIG_get0_r");
+            let p_ecdsa_sig_get0_s = s!("ECDSA_SIG_get0_s");
+            let p_ecdsa_sig_free = s!("ECDSA_SIG_free");
+            let p_bn_num_bits = s!("BN_num_bits");
+            let p_bn_bn2binpad = s!("BN_bn2binpad");
             let p_pem_read_bio_x509 = s!("PEM_read_bio_X509");
             let p_pem_read_bio_private_key = s!("PEM_read_bio_PrivateKey");
             let p_d2i_private_key_bio = s!("d2i_PrivateKey_bio");
@@ -213,6 +240,12 @@ impl X509Ffi {
                 ec_key_get0_group: std::mem::transmute(p_ec_key_get0_group),
                 ec_key_get0_public_key: std::mem::transmute(p_ec_key_get0_public_key),
                 ec_point_to_oct: std::mem::transmute(p_ec_point_to_oct),
+                ecdsa_do_sign: std::mem::transmute(p_ecdsa_do_sign),
+                ecdsa_sig_get0_r: std::mem::transmute(p_ecdsa_sig_get0_r),
+                ecdsa_sig_get0_s: std::mem::transmute(p_ecdsa_sig_get0_s),
+                ecdsa_sig_free: std::mem::transmute(p_ecdsa_sig_free),
+                bn_num_bits: std::mem::transmute(p_bn_num_bits),
+                bn_bn2binpad: std::mem::transmute(p_bn_bn2binpad),
                 pem_read_bio_x509: std::mem::transmute(p_pem_read_bio_x509),
                 pem_read_bio_private_key: std::mem::transmute(p_pem_read_bio_private_key),
                 d2i_private_key_bio: std::mem::transmute(p_d2i_private_key_bio),
@@ -361,18 +394,31 @@ pub fn ecdsa_sign_p256(pkcs8_der: &[u8], data: &[u8]) -> Result<Vec<u8>, SslErro
         (ffi.bio_free)(bio);
         if pkey.is_null() { return Err(SslError::Other("d2i failed for ecdsa_sign".into())); }
 
-        let md = (ffi.evp_sha256)();
-        let mut mdctx = std::ptr::null_mut();
-        (ffi.evp_digest_sign_init)(&mut mdctx, std::ptr::null_mut(), md, std::ptr::null_mut());
-        let mut sig_len: usize = 0;
-        // Get required length
-        (ffi.evp_digest_sign)(mdctx, std::ptr::null_mut(), &mut sig_len, data.as_ptr(), data.len());
-        let mut sig = vec![0u8; sig_len];
-        (ffi.evp_digest_sign)(mdctx, sig.as_mut_ptr(), &mut sig_len, data.as_ptr(), data.len());
-        (ffi.evp_md_ctx_free)(mdctx);
+        // Hash the data with SHA-256
+        let hash = sha256(data)?;
+        let digest = std::slice::from_raw_parts(hash.as_ptr(), hash.len());
+
+        // Extract EC_KEY from EVP_PKEY
+        let ec_key = (ffi.evp_pkey_get1_ec_key)(pkey);
+        if ec_key.is_null() { (ffi.evp_pkey_free)(pkey); return Err(SslError::Other("no EC key".into())); }
+
+        // Use ECDSA_do_sign which returns BIGNUMs directly (no DER parsing needed)
+        let sig = (ffi.ecdsa_do_sign)(digest.as_ptr(), digest.len() as c_int, ec_key);
+        if sig.is_null() {
+            (ffi.ec_key_free)(ec_key);
+            (ffi.evp_pkey_free)(pkey);
+            return Err(SslError::Other("ECDSA_do_sign failed".into()));
+        }
+        let r_bn = (ffi.ecdsa_sig_get0_r)(sig);
+        let s_bn = (ffi.ecdsa_sig_get0_s)(sig);
+        // BN_bn2binpad zero-pads to the full tolen (32 bytes each for P-256)
+        let mut raw = vec![0u8; 64];
+        (ffi.bn_bn2binpad)(r_bn, raw.as_mut_ptr(), 32);
+        (ffi.bn_bn2binpad)(s_bn, raw.as_mut_ptr().add(32), 32);
+        (ffi.ecdsa_sig_free)(sig);
+        (ffi.ec_key_free)(ec_key);
         (ffi.evp_pkey_free)(pkey);
-        sig.truncate(sig_len);
-        Ok(sig)
+        Ok(raw)
     }
 }
 
@@ -392,7 +438,7 @@ pub fn ec_public_key_bytes(pkcs8_der: &[u8]) -> Result<Vec<u8>, SslError> {
         let grp = (ffi.ec_key_get0_group)(ec_key);
         let pt = (ffi.ec_key_get0_public_key)(ec_key);
         let mut buf = vec![0u8; 128];
-        let n = (ffi.ec_point_to_oct)(grp, pt, buf.as_mut_ptr(), buf.len(), std::ptr::null_mut());
+        let n = (ffi.ec_point_to_oct)(grp, pt, 4 /* POINT_CONVERSION_UNCOMPRESSED */, buf.as_mut_ptr(), buf.len(), std::ptr::null_mut());
         (ffi.ec_key_free)(ec_key);
         (ffi.evp_pkey_free)(pkey);
         buf.truncate(n);
@@ -406,11 +452,21 @@ pub fn sha256(data: &[u8]) -> Result<[u8; 32], SslError> {
     unsafe {
         let md = (ffi.evp_sha256)();
         let ctx = (ffi.evp_md_ctx_new)();
-        (ffi.evp_digest_init_ex)(ctx, md, std::ptr::null_mut());
-        (ffi.evp_digest_update)(ctx, data.as_ptr() as *const _, data.len());
+        if ctx.is_null() { return Err(SslError::Other("EVP_MD_CTX_new failed".into())); }
+        if (ffi.evp_digest_init_ex)(ctx, md, std::ptr::null_mut()) != 1 {
+            (ffi.evp_md_ctx_free)(ctx);
+            return Err(SslError::Other("EVP_DigestInit_ex failed".into()));
+        }
+        if (ffi.evp_digest_update)(ctx, data.as_ptr() as *const _, data.len()) != 1 {
+            (ffi.evp_md_ctx_free)(ctx);
+            return Err(SslError::Other("EVP_DigestUpdate failed".into()));
+        }
         let mut out = [0u8; 64];
         let mut len: u32 = 0;
-        (ffi.evp_digest_final_ex)(ctx, out.as_mut_ptr(), &mut len);
+        if (ffi.evp_digest_final_ex)(ctx, out.as_mut_ptr(), &mut len) != 1 {
+            (ffi.evp_md_ctx_free)(ctx);
+            return Err(SslError::Other("EVP_DigestFinal_ex failed".into()));
+        }
         (ffi.evp_md_ctx_free)(ctx);
         let mut result = [0u8; 32];
         result.copy_from_slice(&out[..32]);
