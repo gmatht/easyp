@@ -44,15 +44,15 @@ pub fn cgi_main(env: &CgiEnv) -> Result<String, String> {
 
     // Get return URL from query parameters
     let return_url = params.get("return_url")
-        .map(|s| url_decode(s))
+        .and_then(|s| url_decode(s).ok())
         .unwrap_or_else(|| "/".to_string());
 
     // Get USER and TEXT parameters
     let user = params.get("USER")
-        .map(|s| url_decode(s))
+        .and_then(|s| url_decode(s).ok())
         .unwrap_or_else(|| "Anonymous".to_string());
     let text = params.get("TEXT")
-        .map(|s| url_decode(s))
+        .and_then(|s| url_decode(s).ok())
         .unwrap_or_else(|| "".to_string());
 
     // Validate required parameters
@@ -192,7 +192,7 @@ pub fn handle_comment_request(
     query_string: &str,
     headers: &HashMap<String, String>,
 ) -> Result<String, String> {
-    let env = CgiEnv::from_request(method, uri, host, query_string, headers);
+    let env = CgiEnv::from_request(query_string);
     cgi_main(&env)
 }
 

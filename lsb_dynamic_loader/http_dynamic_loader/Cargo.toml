@@ -1,0 +1,19 @@
+[package]
+name = "http-dynamic-loader"
+version = "0.1.0"
+edition = "2021"
+description = "Runtime-loaded HTTP/2 (libnghttp2) and HTTP/3 (libngtcp2 + libnghttp3) protocol wrappers"
+license = "MIT"
+
+[dependencies]
+lsb-loader = { path = "../crates/lsb-loader" }
+thiserror = "1.0"
+
+[lib]
+name = "http_dynamic_loader"
+path = "src/lib.rs"
+
+[features]
+h2 = []
+h3 = []
+default = []

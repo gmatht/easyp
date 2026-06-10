@@ -127,6 +127,10 @@ fn broadcast_log_entry(level: &str, message: &str, source: &str) {
 }
 
 
+struct LogCaptureLogger {
+    level: log::Level,
+}
+
 impl LogCaptureLogger {
     pub fn new(level: log::Level) -> Self {
         Self { level }

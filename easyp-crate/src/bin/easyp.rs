@@ -52,7 +52,7 @@ impl log::Log for SimpleLogger {
             println!("{}", log_message);
 
             // Also write to file
-            write_file_log(&record.level().to_string(), &record.args().to_string());
+            file_logger::write_file_log(&record.level().to_string(), &record.args().to_string());
 
             // Broadcast to SSE subscribers (when extensions are enabled)
             #[cfg(feature = "extensions")]
@@ -607,13 +607,9 @@ impl OnDemandHttpsServer {
                    println!("ACME lib directory created: {}", acme_lib_dir);
                }
 
-                // Check if port 80 is available for ACME challenges
-                let port_80_available = is_port_80_available();
-
-               if !port_80_available {
-                   println!("⚠️  Port 80 is not available. ACME certificate generation will not be possible.");
-                   println!("ℹ️  Using self-signed certificates instead. Run as root or ensure port 80 is available for real certificates.");
-               }
+                // HTTP listener was already bound successfully before privilege drop.
+                // Checking port 80 now (as www-data) would fail on privileged ports.
+                // Use the pre-drop check result from earlier.
 
                  // Ensure self-signed certificate is available, then create SNI fallback
                  let (cert_path, key_path) = ensure_self_signed_cert("localhost", &args.cache_dir)?;
@@ -1033,7 +1029,7 @@ impl OnDemandHttpsServer {
                     let clean = bin_path.trim_start_matches('/');
                     script_path = script_path.join(clean.trim_start_matches("cgi-bin/"));
 
-                    match cgi_handler::execute_cgi_script(&script_path, &crate::cgi_env::CgiEnv::from_request("GET", bin_path, "localhost", query_string, &headers), None, 5).await {
+                    match cgi_handler::execute_cgi_script(&script_path, &crate::cgi_env::CgiEnv::from_request(query_string), None, 5).await {
                         Ok(bytes) => Ok(String::from_utf8_lossy(&bytes).to_string()),
                         Err(e) => Err(e),
                     }
@@ -1404,7 +1400,20 @@ impl OnDemandHttpsServer {
                 let ctx = openssl.ctx_new(false)?;
                 // Set SNI callback — leak a copy of the Arc so it lives for the SSL_CTX lifetime
                 let sni_ptr = Arc::into_raw(sni_fallback.clone()) as *mut std::ffi::c_void;
-                ctx.set_servername_callback(sni_callback, sni_ptr)?;
+                if ctx.set_servername_callback(sni_callback, sni_ptr).is_err() {
+                    // OpenSSL 3.x: use cert_cb instead (different return convention:
+                    // 1 = success, 0 = error; vs old SNI callback which uses 0 = OK)
+                    unsafe extern "C" fn sni_cert_cb(
+                        ssl: *mut std::ffi::c_void,
+                        arg: *mut std::ffi::c_void,
+                    ) -> std::os::raw::c_int {
+                        match sni_callback(ssl, std::ptr::null_mut(), arg) {
+                            0 => 1,
+                            _ => 0,
+                        }
+                    }
+                    ctx.set_cert_cb(sni_cert_cb, sni_ptr)?;
+                }
                 #[cfg(feature = "http2")]
                 if http2_enabled {
                     // Use context-level ALPN select callback for server-side negotiation
@@ -1841,7 +1850,10 @@ impl OnDemandHttpsServer {
         println!("ACME HTTP-01 challenge request for token: {}", token);
 
         // Look up the key authorization for this token
-        let key_authorization = Self::get_challenge_response_from_params(acme_client, http_challenges, token);
+        let key_authorization = {
+            let challenges = http_challenges.lock().unwrap();
+            challenges.get(token).cloned()
+        };
 
         let response = if let Some(key_auth) = key_authorization {
             println!("Serving challenge response for token: {}", token);
@@ -2157,16 +2169,17 @@ fn is_running_as_root() -> bool {
 
 /// Check if port 80 is available for ACME challenges
 fn is_port_80_available() -> bool {
-    match std::net::TcpListener::bind("0.0.0.0:80") {
-        Ok(_) => {
-            // Port 80 is available, close the listener
-            true
-        }
-        Err(_) => {
-            // Port 80 is not available (permission denied or already in use)
-            false
+    // Retry a few times to avoid races with the previous instance releasing the port
+    for attempt in 0..3 {
+        match std::net::TcpListener::bind("0.0.0.0:80") {
+            Ok(_) => return true,
+            Err(_) if attempt < 2 => {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            _ => {}
         }
     }
+    false
 }
 
 /// Look up the UID and GID for the www-data user
@@ -2545,12 +2558,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     println!("DEBUG: Attempting to initialize file logger at: {}", log_file_path);
-    if let Err(e) = init_file_logger(&log_file_path) {
+    if let Err(e) = file_logger::init_file_logger(&log_file_path) {
         eprintln!("Warning: Failed to initialize file logger: {}", e);
         // Fallback to /tmp if user directory is not accessible
         let fallback_path = "/tmp/easyp.log";
         println!("DEBUG: Attempting fallback file logger at: {}", fallback_path);
-        if let Err(e2) = init_file_logger(fallback_path) {
+        if let Err(e2) = file_logger::init_file_logger(fallback_path) {
             eprintln!("Warning: Failed to initialize fallback file logger: {}", e2);
         } else {
             println!("📝 File logging initialized: {}", fallback_path);

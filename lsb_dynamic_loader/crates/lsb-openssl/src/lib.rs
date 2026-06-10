@@ -68,6 +68,15 @@ type SslCtxSetServernameCallbackFn = unsafe extern "C" fn(
     cb: Option<ServernameCallbackFn>,
     arg: *mut c_void,
 ) -> c_int;
+type SslCtxSetCertCallbackFn = unsafe extern "C" fn(
+    ctx: *mut c_void,
+    cb: Option<CertCallbackFn>,
+    arg: *mut c_void,
+);
+pub type CertCallbackFn = unsafe extern "C" fn(
+    ssl: *mut c_void,
+    arg: *mut c_void,
+) -> c_int;
 type SslCheckPrivateKeyFn = unsafe extern "C" fn(ssl: *mut c_void) -> c_int;
 type SslGetErrorFn = unsafe extern "C" fn(ssl: *mut c_void, ret: c_int) -> c_int;
 type ErrGetErrorFn = unsafe extern "C" fn() -> c_ulong;
@@ -104,6 +113,7 @@ pub struct Openssl {
     ssl_ctx_set_alpn_select_cb: Option<SslCtxSetAlpnSelectCbFn>,
     ssl_set_accept_state: Option<SslSetAcceptStateFn>,
     ssl_ctx_set_servername_callback: Option<SslCtxSetServernameCallbackFn>,
+    ssl_ctx_set_cert_cb: Option<SslCtxSetCertCallbackFn>,
     ssl_get_servername: Option<SslGetServernameFn>,
     ssl_use_certificate: Option<SslUseCertificateFn>,
     ssl_use_private_key: Option<SslUsePrivateKeyFn>,
@@ -192,6 +202,8 @@ impl Openssl {
                 libssl.get_symbol_raw("SSL_set_accept_state").ok().map(|p| transmute(p));
             let ssl_ctx_set_servername_callback: Option<SslCtxSetServernameCallbackFn> =
                 libssl.get_symbol_raw("SSL_CTX_set_tlsext_servername_callback").ok().map(|p| transmute(p));
+            let ssl_ctx_set_cert_cb: Option<SslCtxSetCertCallbackFn> =
+                libssl.get_symbol_raw("SSL_CTX_set_cert_cb").ok().map(|p| transmute(p));
             let ssl_get_servername: Option<SslGetServernameFn> =
                 libssl.get_symbol_raw("SSL_get_servername").ok().map(|p| transmute(p));
             let ssl_use_certificate: Option<SslUseCertificateFn> =
@@ -253,6 +265,7 @@ impl Openssl {
                 ssl_ctx_set_alpn_select_cb,
                 ssl_set_accept_state,
                 ssl_ctx_set_servername_callback,
+                ssl_ctx_set_cert_cb,
                 ssl_get_servername,
                 ssl_use_certificate,
                 ssl_use_private_key,
@@ -393,6 +406,7 @@ impl Openssl {
             ssl_ctx_set_alpn_protos: self.ssl_ctx_set_alpn_protos,
             ssl_ctx_set_alpn_select_cb: self.ssl_ctx_set_alpn_select_cb,
             ssl_ctx_set_servername_callback: self.ssl_ctx_set_servername_callback,
+            ssl_ctx_set_cert_cb: self.ssl_ctx_set_cert_cb,
         })
     }
 
@@ -495,6 +509,7 @@ pub struct SslCtx {
     ssl_ctx_set_alpn_protos: Option<SslCtxSetAlpnProtosFn>,
     ssl_ctx_set_alpn_select_cb: Option<SslCtxSetAlpnSelectCbFn>,
     ssl_ctx_set_servername_callback: Option<SslCtxSetServernameCallbackFn>,
+    ssl_ctx_set_cert_cb: Option<SslCtxSetCertCallbackFn>,
 }
 
 unsafe impl Send for SslCtx {}
@@ -571,6 +586,22 @@ impl SslCtx {
         arg: *mut c_void,
     ) -> Result<(), SslError> {
         match self.ssl_ctx_set_servername_callback {
+            Some(f) => {
+                unsafe { f(self.ctx, Some(cb), arg); }
+                Ok(())
+            }
+            None => Err(SslError::Other("SNI callback not available".into())),
+        }
+    }
+
+    /// Fallback: use SSL_CTX_set_cert_cb (OpenSSL 3.x).
+    /// The caller must provide a `CertCallbackFn` that receives `arg` directly.
+    pub fn set_cert_cb(
+        &self,
+        cb: CertCallbackFn,
+        arg: *mut c_void,
+    ) -> Result<(), SslError> {
+        match self.ssl_ctx_set_cert_cb {
             Some(f) => {
                 unsafe { f(self.ctx, Some(cb), arg); }
                 Ok(())

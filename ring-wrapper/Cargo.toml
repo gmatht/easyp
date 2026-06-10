@@ -1,0 +1,18 @@
+[package]
+name = "ring"
+version = "0.1.0"
+edition = "2021"
+description = "Ring-compatible API backed by OpenSSL loaded at runtime (replaces upstream ring)"
+
+[dependencies]
+libloading = "0.8"
+
+[features]
+default = ["alloc", "dev_urandom_fallback"]
+std = []
+alloc = ["std"]
+dev_urandom_fallback = []
+
+[lib]
+name = "ring"
+path = "src/lib.rs"
