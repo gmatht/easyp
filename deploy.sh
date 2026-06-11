@@ -1,15 +1,36 @@
 #!/bin/bash
 
 # Deploy script for EasyPeas HTTPS server
-# Usage: ./deploy.sh <target_host>
+# Usage: ./deploy.sh [-p|--production] <target_host>
+
+PRODUCTION=false
+
+while [[ "$1" =~ ^- ]]; do
+    case "$1" in
+        -p|--production)
+            PRODUCTION=true
+            shift
+            ;;
+        *)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
+    esac
+done
 
 if [ $# -ne 1 ]; then
-    echo "Usage: $0 <target_host>"
+    echo "Usage: $0 [-p|--production] <target_host>"
     echo "Example: $0 user@server.com"
+    echo "         $0 -p user@server.com"
     exit 1
 fi
 
 TARGET_HOST="$1"
+
+BINARY_FLAGS=""
+if [ "$PRODUCTION" = false ]; then
+    BINARY_FLAGS="--staging"
+fi
 
 BINARY_NAME="easyp"
 SERVICE_NAME="easyp"
@@ -85,7 +106,7 @@ if [ $? -ne 0 ]; then
 fi
 
 echo "Installing binary and setting up systemd service..."
-ssh $TARGET_HOST << 'EOF'
+ssh $TARGET_HOST << EOF
     # Move binary to /usr/local/bin and set permissions
     sudo mv /tmp/easyp /usr/local/bin/easyp
     sudo chmod +x /usr/local/bin/easyp
@@ -111,7 +132,7 @@ After=network.target
 Type=simple
 User=root
 Group=root
-ExecStart=/usr/local/bin/easyp
+ExecStart=/usr/local/bin/easyp $BINARY_FLAGS
 Restart=always
 RestartSec=5
 StandardOutput=journal

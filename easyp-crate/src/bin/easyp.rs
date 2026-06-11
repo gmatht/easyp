@@ -1151,8 +1151,8 @@ impl OnDemandHttpsServer {
             let security_config = self.secure_file_server.config().clone();
             let cache_dir = self.args.cache_dir.clone();
             smol::spawn(async move {
-                let cert_file = format!("{}/fullchain.pem", cache_dir);
-                let key_file = format!("{}/privkey.pem", cache_dir);
+                let cert_file = format!("{}/localhost/fullchain.pem", cache_dir);
+                let key_file = format!("{}/localhost/privkey.pem", cache_dir);
                 match http3_handler::Http3Handler::new(
                     Arc::new(file_server),
                     stats_collector,
@@ -1161,7 +1161,7 @@ impl OnDemandHttpsServer {
                     &cert_file,
                     &key_file,
                 ).await {
-                    Ok(handler) => {
+                    Ok(mut handler) => {
                         if let Err(e) = handler.run().await {
                             eprintln!("HTTP/3 handler error: {}", e);
                         }
@@ -1808,13 +1808,24 @@ impl OnDemandHttpsServer {
                 ctx.set_cert_cb(sni_cert_cb, sni_ptr)?;
                 #[cfg(feature = "http2")]
                 if http2_enabled {
-                    static ALPN_WIRE: &[u8] = &[13, 0, 0, 0, 2, b'h', b'2', 8, b'h', b't', b't', b'p', b'/', b'1', b'.', b'1'];
+                    // Wire format: [total_len: u32 LE][protocols...]
+                    // Each protocol: [len: u8][name: len bytes]
+                    static ALPN_WIRE: &[u8] = &[
+                        12u8, 0, 0, 0,    // total_len = 12 bytes of protocol data
+                        2, b'h', b'2',     // "h2"
+                        8, b'h', b't', b't', b'p', b'/', b'1', b'.', b'1',  // "http/1.1"
+                    ];
                     ctx.set_alpn_select_callback(ALPN_WIRE)?;
                 }
                 let ssl = openssl.ssl_new_from_fd(&ctx, fd)?;
                 ssl.set_accept_state()?;
                 ssl.accept()?;
                 let alpn = ssl.get_alpn_selected();
+                if let Some(ref alpn) = alpn {
+                    println!("🔍 ALPN negotiated: {:?}", String::from_utf8_lossy(alpn));
+                } else {
+                    println!("🔍 No ALPN negotiated");
+                }
 
                 // Set fd back to non-blocking for async I/O
                 unsafe {

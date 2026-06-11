@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::io::Write;
 use std::net::TcpStream;
 
 use crate::api::ApiProblem;
@@ -97,7 +96,7 @@ fn connect_tls(host: &str, port: u16) -> Result<lsb_openssl::tls::TlsStream, Err
         .map_err(|e| Error::Http(format!("TLS handshake failed: {}", e)))
 }
 
-fn send_request(host: &str, tls: &mut lsb_openssl::tls::TlsStream, request: &str) -> Result<Vec<u8>, Error> {
+fn send_request(_host: &str, tls: &mut lsb_openssl::tls::TlsStream, request: &str) -> Result<Vec<u8>, Error> {
     use std::io::Write;
     tls.write_all(request.as_bytes())?;
 

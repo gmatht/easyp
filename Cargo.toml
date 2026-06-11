@@ -22,7 +22,7 @@ members = [
   "lsb_dynamic_loader/crates/lsb-openssl",
   # LSB Windows compatibility wrappers
   "lsb_dynamic_loader/compat/lsb-schannel",
-  "lsb_dynamic_loader/compat/lsb-winhttp",
+  "lsb_dynamic_loader/compat/lsb-winhttp", "h3_test",
   # LSB crypto provider for rustls
 ]
 
@@ -150,7 +150,7 @@ rustls-webpki = { path = "webpki" }
 [profile.release]
 opt-level = "z"
 strip = true
-lto = "fat"
+lto = "thin"
 incremental = false
 overflow-checks = true
 debug = false

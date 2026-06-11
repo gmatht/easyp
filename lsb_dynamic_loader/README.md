@@ -12,6 +12,22 @@ Runtime `dlopen()` wrappers for LSB (Linux Standard Base) system libraries — c
 | `lsb-squeeze-test` | Integration test against Debian Squeeze's ancient libssl 0.9.8 and libz (built in a chroot) |
 | `lsb-nix-test` | Integration test against Nix store OpenSSL 3.x and zlib (when Nix is installed) |
 
+## Design decisions
+
+### Why `dlsym` instead of `dlvsym`
+
+All symbol resolution in this loader uses `dlsym` (via `libloading::Library::get`), never `dlvsym`. Symbol versioning in ELF (`symname@VERSION`) is intentionally avoided for several reasons:
+
+- **`dlvsym` doesn't solve the real compatibility problem.** The breaks between OpenSSL 1.1 and 3.x aren't about subtle semantic changes to a versioned symbol — they involve removed symbols, renamed functions, and changed struct layouts. `dlvsym` can't conjure a symbol that doesn't exist in the loaded library, nor can it fix ABI mismatches from struct changes. These require explicit fallback logic, which the wrappers already provide (e.g. `TLS_client_method` → `SSLv23_client_method`, `X509_getm_notBefore` → `X509_get_notBefore`, `OPENSSL_sk_new_null` → `sk_X509_EXTENSION_new_null`).
+
+- **Version tags are not a stable interface.** The same upstream version may carry different soname and symbol-version tags across distributions. Hardcoding versioned symbol names would be fragile and platform-dependent.
+
+- **`dlsym` is adaptive.** It returns the default version of a symbol — the one the library considers canonical for its current major version. Pinning to an old version tag via `dlvsym` would select a backward-compatibility shim at best, or a missing symbol at worst.
+
+- **`libloading` has no `dlvsym` support.** Using it would require raw FFI bindings and a parallel resolution path, adding complexity to every call site for no concrete benefit.
+
+We remain open to reconsidering if a future scenario arises where a library ships backward-incompatible behavior under the same symbol name *without* changing the version tag, and where a compat shim bearing the old tag is still available.
+
 ## Usage
 
 ```rust

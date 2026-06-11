@@ -1,4 +1,4 @@
-use std::os::raw::{c_char, c_int, c_void, c_uchar};
+use std::os::raw::{c_char, c_int, c_void};
 use lsb_loader::LoadedLibrary;
 
 // ── Core ngtcp2 function pointers ─────────────────────────────
@@ -32,6 +32,20 @@ pub struct Ngtcp2Lib {
     pub transport_params_default: unsafe extern "C" fn(c_int, *mut c_void),
     pub mem_default: unsafe extern "C" fn() -> *const c_void,
     pub cid_init: unsafe extern "C" fn(*mut c_void, *const u8, usize),
+    pub pkt_decode_version_cid: unsafe extern "C" fn(
+        *mut c_void, *const u8, usize, usize,
+    ) -> c_int,
+    pub addr_init: unsafe extern "C" fn(
+        *mut c_void, *const c_void, u32,
+    ) -> *mut c_void,
+    pub get_tls_native_handle: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
+    pub set_tls_native_handle: unsafe extern "C" fn(*mut c_void, *mut c_void),
+    pub set_initial_crypto_ctx: unsafe extern "C" fn(*mut c_void, *const c_void),
+    pub strerror: unsafe extern "C" fn(c_int) -> *const c_char,
+}
+
+unsafe extern "C" fn ngtcp2_strerror_stub(_: c_int) -> *const c_char {
+    std::ptr::null()
 }
 
 impl Ngtcp2Lib {
@@ -51,6 +65,11 @@ impl Ngtcp2Lib {
                 "ngtcp2_transport_params_default_versioned",
                 "ngtcp2_mem_default",
                 "ngtcp2_cid_init",
+                "ngtcp2_pkt_decode_version_cid",
+                "ngtcp2_addr_init",
+                "ngtcp2_conn_get_tls_native_handle",
+                "ngtcp2_conn_set_tls_native_handle",
+                "ngtcp2_conn_set_initial_crypto_ctx",
             ],
         )?;
         unsafe {
@@ -66,9 +85,20 @@ impl Ngtcp2Lib {
             let transport_params_default = std::mem::transmute(lib.get_symbol_raw("ngtcp2_transport_params_default_versioned")?);
             let mem_default = std::mem::transmute(lib.get_symbol_raw("ngtcp2_mem_default")?);
             let cid_init = std::mem::transmute(lib.get_symbol_raw("ngtcp2_cid_init")?);
+            let pkt_decode_version_cid = std::mem::transmute(lib.get_symbol_raw("ngtcp2_pkt_decode_version_cid")?);
+            let addr_init = std::mem::transmute(lib.get_symbol_raw("ngtcp2_addr_init")?);
+            let get_tls_native_handle = std::mem::transmute(lib.get_symbol_raw("ngtcp2_conn_get_tls_native_handle")?);
+            let set_tls_native_handle = std::mem::transmute(lib.get_symbol_raw("ngtcp2_conn_set_tls_native_handle")?);
+            let set_initial_crypto_ctx = std::mem::transmute(lib.get_symbol_raw("ngtcp2_conn_set_initial_crypto_ctx")?);
+            let strerror_ptr = lib.get_symbol_raw("ngtcp2_strerror").ok();
+            let strerror: unsafe extern "C" fn(c_int) -> *const c_char = match strerror_ptr {
+                Some(p) => unsafe { std::mem::transmute(p) },
+                None => ngtcp2_strerror_stub,
+            };
             Ok(Ngtcp2Lib { lib, accept, conn_server_new, conn_del, conn_read_pkt, conn_write_pkt,
                 submit_crypto_data, handshake_completed, get_handshake_completed,
-                settings_default, transport_params_default, mem_default, cid_init })
+                settings_default, transport_params_default, mem_default, cid_init, pkt_decode_version_cid, addr_init,
+                get_tls_native_handle, set_tls_native_handle, set_initial_crypto_ctx, strerror })
         }
     }
 }

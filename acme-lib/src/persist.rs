@@ -12,8 +12,6 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use sha2::{Digest, Sha256};
-
 use crate::{Error, Result};
 
 /// Kinds of [persistence keys](struct.PersistKey.html).
@@ -54,9 +52,8 @@ impl<'a> PersistKey<'a> {
     ///
     /// [`account_with_realm`]: ../struct.Directory.html#method.account_with_realm
     pub fn new(realm: &str, kind: PersistKind, key: &'a str) -> Self {
-        let mut h = Sha256::new();
-        h.update(realm.as_bytes());
-        let result = h.finalize();
+        let result = lsb_openssl::certs::sha256(realm.as_bytes())
+            .expect("lsb-openssl: sha256");
         // Use first 8 bytes as a big-endian u64 for stable file naming
         let realm = u64::from_be_bytes(result[..8].try_into().unwrap());
         PersistKey { realm, kind, key }

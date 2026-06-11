@@ -39,7 +39,7 @@ type SslCtxUseCertFileFn = unsafe extern "C" fn(ctx: *mut c_void, file: *const c
 type SslCtxUseKeyFileFn = unsafe extern "C" fn(ctx: *mut c_void, file: *const c_char, typ: c_int) -> c_int;
 type SslCtxSetAlpnProtosFn = unsafe extern "C" fn(ctx: *mut c_void, wire: *const u8, len: u16) -> c_int;
 type SslSetAlpnProtosFn = unsafe extern "C" fn(ssl: *mut c_void, wire: *const u8, len: u16) -> c_int;
-type SslGet0AlpnSelectedFn = unsafe extern "C" fn(ssl: *mut c_void, data: *mut *const u8, len: *mut u16);
+type SslGet0AlpnSelectedFn = unsafe extern "C" fn(ssl: *mut c_void, data: *mut *const u8, len: *mut u32, peer_len: *mut u32);
 type SslCtxSetAlpnSelectCbFn = unsafe extern "C" fn(ctx: *mut c_void, cb: Option<AlpnSelectCb>, arg: *mut c_void);
 
 pub const SSL_TLSEXT_ERR_OK: i32 = 0;
@@ -129,6 +129,17 @@ pub struct Openssl {
 }
 
 impl Openssl {
+    /// Get or initialize a process-wide OpenSSL singleton.
+    /// All callers share the same loaded instance, avoiding duplicate `dlopen`
+    /// issues where symbols resolve differently on subsequent loads.
+    pub fn global() -> Result<&'static Self, SslError> {
+        static OPENSSL: std::sync::OnceLock<Openssl> = std::sync::OnceLock::new();
+        let openssl = OPENSSL.get_or_init(|| {
+            Self::load().expect("OpenSSL failed to load — check that libssl is installed")
+        });
+        Ok(openssl)
+    }
+
     pub fn load() -> Result<Self, SslError> {
         let ssl_path = std::env::var("LSBWRAP_LIBSSL_PATH").ok();
         let crypto_path = std::env::var("LSBWRAP_LIBCRYPTO_PATH").ok();
@@ -713,8 +724,9 @@ impl SslConn {
         self.ssl_get0_alpn_selected.and_then(|f| {
             unsafe {
                 let mut data: *const u8 = std::ptr::null();
-                let mut len: u16 = 0;
-                f(self.ssl, &mut data, &mut len);
+                let mut len: u32 = 0;
+                let mut _peer_len: u32 = 0;
+                f(self.ssl, &mut data, &mut len, &mut _peer_len);
                 if len > 0 && !data.is_null() {
                     Some(std::slice::from_raw_parts(data, len as usize).to_vec())
                 } else {

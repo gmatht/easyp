@@ -1,5 +1,4 @@
 //
-use sha2::{Sha256, Digest};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -203,10 +202,8 @@ impl<P: Persist> Challenge<P, TlsAlpn> {
     /// certificate used for validation.
     pub fn tls_alpn_proof(&self) -> [u8; 32] {
         let acme_key = self.inner.transport.acme_key();
-        let hash = Sha256::digest(key_authorization(&self.api_challenge.token, acme_key, false).as_bytes());
-        let mut result = [0u8; 32];
-        result.copy_from_slice(&hash);
-        result
+        lsb_openssl::certs::sha256(key_authorization(&self.api_challenge.token, acme_key, false).as_bytes())
+            .expect("lsb-openssl: sha256")
     }
 }
 
@@ -267,10 +264,10 @@ fn key_authorization(token: &str, key: &AcmeKey, extra_sha256: bool) -> String {
     let jwk: Jwk = key.into();
     let jwk_thumb: JwkThumb = (&jwk).into();
     let jwk_json = serde_json::to_string(&jwk_thumb).expect("jwk_thumb");
-    let digest = base64url(&Sha256::digest(jwk_json.as_bytes()));
+    let digest = base64url(&lsb_openssl::certs::sha256(jwk_json.as_bytes()).expect("lsb-openssl: sha256"));
     let key_auth = format!("{}.{}", token, digest);
     if extra_sha256 {
-        base64url(&Sha256::digest(key_auth.as_bytes()))
+        base64url(&lsb_openssl::certs::sha256(key_auth.as_bytes()).expect("lsb-openssl: sha256"))
     } else {
         key_auth
     }

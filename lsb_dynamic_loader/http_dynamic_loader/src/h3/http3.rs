@@ -4,13 +4,59 @@ use std::os::raw::c_int;
 
 type Nghttp3VersionFn = unsafe extern "C" fn() -> *const std::os::raw::c_char;
 
+// ── nghttp3 callback types ────────────────────────────────────
+
+pub type Nghttp3DeferredConsume = unsafe extern "C" fn(
+    *mut std::os::raw::c_void, i64, usize, *mut std::os::raw::c_void,
+);
+pub type Nghttp3BeginHeaders = unsafe extern "C" fn(
+    *mut std::os::raw::c_void, i64, *mut std::os::raw::c_void,
+) -> c_int;
+pub type Nghttp3RecvHeader = unsafe extern "C" fn(
+    *mut std::os::raw::c_void, i64, *const u8, usize, *const u8, usize,
+    *mut std::os::raw::c_void,
+) -> c_int;
+pub type Nghttp3EndHeaders = unsafe extern "C" fn(
+    *mut std::os::raw::c_void, i64, *mut std::os::raw::c_void,
+) -> c_int;
+pub type Nghttp3RecvData = unsafe extern "C" fn(
+    *mut std::os::raw::c_void, i64, *const u8, usize, *mut std::os::raw::c_void,
+) -> c_int;
+pub type Nghttp3EndStream = unsafe extern "C" fn(
+    *mut std::os::raw::c_void, i64, *mut std::os::raw::c_void,
+) -> c_int;
+pub type Nghttp3StopSending = unsafe extern "C" fn(
+    *mut std::os::raw::c_void, i64, u64, *mut std::os::raw::c_void,
+) -> c_int;
+pub type Nghttp3ResetStream = unsafe extern "C" fn(
+    *mut std::os::raw::c_void, i64, u64, *mut std::os::raw::c_void,
+) -> c_int;
+pub type Nghttp3SendData = unsafe extern "C" fn(
+    *mut std::os::raw::c_void, i64, *mut std::os::raw::c_void,
+) -> c_int;
+
+#[repr(C)]
+pub struct Nghttp3Callbacks {
+    pub deferred_consume: Option<Nghttp3DeferredConsume>,
+    pub begin_headers: Option<Nghttp3BeginHeaders>,
+    pub recv_header: Option<Nghttp3RecvHeader>,
+    pub end_headers: Option<Nghttp3EndHeaders>,
+    pub recv_data: Option<Nghttp3RecvData>,
+    pub end_stream: Option<Nghttp3EndStream>,
+    pub stop_sending: Option<Nghttp3StopSending>,
+    pub reset_stream: Option<Nghttp3ResetStream>,
+    pub send_data: Option<Nghttp3SendData>,
+    pub error: Option<unsafe extern "C" fn(*mut std::os::raw::c_void, i64, c_int, *mut std::os::raw::c_void)>,
+}
+
 /// Runtime-loaded libnghttp3 (HTTP/3 framing).
 pub struct Nghttp3 {
     pub lib: LoadedLibrary,
     pub conn_server_new: unsafe extern "C" fn(
         *mut *mut std::os::raw::c_void,
-        *const std::os::raw::c_void, *const std::os::raw::c_void,
-        *const std::os::raw::c_void, u32, *mut std::os::raw::c_void,
+        c_int, *const std::os::raw::c_void,
+        c_int, *const std::os::raw::c_void,
+        *const std::os::raw::c_void, *mut std::os::raw::c_void,
     ) -> c_int,
     pub conn_del: unsafe extern "C" fn(*mut std::os::raw::c_void),
     pub conn_read_stream: unsafe extern "C" fn(

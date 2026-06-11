@@ -40,7 +40,7 @@ mod platform {
     use super::TlsError;
 
     pub struct TlsConnector {
-        pub(crate) openssl: crate::Openssl,
+        pub(crate) openssl: &'static crate::Openssl,
         pub(crate) alpn: Option<Vec<Vec<u8>>>,
         pub(crate) is_client: bool,
         pub(crate) cert_path: Option<String>,
@@ -49,7 +49,7 @@ mod platform {
 
     impl TlsConnector {
         pub fn new(is_client: bool) -> Result<Self, TlsError> {
-            let openssl = crate::Openssl::load()
+            let openssl = crate::Openssl::global()
                 .map_err(|e| TlsError::Protocol(format!("Failed to load OpenSSL: {e}")))?;
             openssl.init()
                 .map_err(|e| TlsError::Protocol(format!("OpenSSL init failed: {e}")))?;
