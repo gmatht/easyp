@@ -20,6 +20,9 @@ members = [
   "lsb_dynamic_loader/crates/lsb-zlib",
   # LSB OpenSSL wrapper
   "lsb_dynamic_loader/crates/lsb-openssl",
+  # LSB Windows compatibility wrappers
+  "lsb_dynamic_loader/compat/lsb-schannel",
+  "lsb_dynamic_loader/compat/lsb-winhttp",
   # LSB crypto provider for rustls
 ]
 
@@ -117,6 +120,8 @@ zlib-rs = "0.5"
 lsb-loader = { path = "lsb_dynamic_loader/crates/lsb-loader" }
 lsb-zlib = { path = "lsb_dynamic_loader/crates/lsb-zlib" }
 lsb-openssl = { path = "lsb_dynamic_loader/crates/lsb-openssl" }
+lsb-schannel = { path = "lsb_dynamic_loader/compat/lsb-schannel" }
+lsb-winhttp = { path = "lsb_dynamic_loader/compat/lsb-winhttp" }
 #rustls-pemfile = "2.2"
 rustls-pemfile = { version = "2.2" }
 #rcgen = { workspace = true }

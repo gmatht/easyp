@@ -1,0 +1,15 @@
+[package]
+name = "lsb-schannel"
+version = "0.1.0"
+edition = "2021"
+description = "Native Windows SChannel TLS wrapper (SSPI-based) for lsb_dynamic_loader"
+license = "MIT"
+
+[dependencies]
+thiserror = "1.0"
+
+[lib]
+name = "lsb_schannel"
+path = "src/lib.rs"
+
+[target.'cfg(windows)'.dependencies]

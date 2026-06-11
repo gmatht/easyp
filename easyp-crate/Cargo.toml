@@ -18,7 +18,7 @@ path = "src/bin/easyp.rs"
 
 
 [features]
-default = ["crypto-rustls", "extensions", "http2"]
+default = ["crypto-lsb", "extensions", "http2"]
 acme = []
 crypto-rustls = ["rustls-acme", "rustls/ring", "acme"]
 crypto-lsb = ["dep:acme-lib", "acme-lib/crypto-lsb", "acme"]

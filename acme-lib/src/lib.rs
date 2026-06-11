@@ -157,7 +157,7 @@ mod cert;
 mod dir;
 mod error;
 mod jwt;
-#[cfg(feature = "crypto-rustls")]
+#[cfg(all(feature = "crypto-rustls", not(feature = "crypto-lsb")))]
 mod req;
 
 #[cfg(feature = "crypto-lsb")]

@@ -1,12 +1,9 @@
-//! TLS crypto callbacks for ngtcp2 QUIC via libngtcp2_crypto_gnutls + libgnutls.
-
 use crate::HttpError;
 use lsb_loader::LoadedLibrary;
+use std::os::raw::c_int;
 
 pub struct GnutlsCrypto {
-    #[allow(dead_code)]
     pub gnutls_lib: LoadedLibrary,
-    #[allow(dead_code)]
     pub crypto_lib: LoadedLibrary,
 }
 
@@ -28,6 +25,7 @@ impl GnutlsCrypto {
                 "ngtcp2_crypto_delete_crypto_cipher_ctx_cb",
                 "ngtcp2_crypto_get_path_challenge_data_cb",
                 "ngtcp2_crypto_version_negotiation_cb",
+                "ngtcp2_crypto_read_write_crypto_data",
             ],
         )?;
 
@@ -53,5 +51,10 @@ impl GnutlsCrypto {
         )?;
 
         Ok(GnutlsCrypto { crypto_lib, gnutls_lib })
+    }
+
+    pub fn get_cb<T>(&self, name: &[u8]) -> Option<T> {
+        self.crypto_lib.get_symbol_raw(name).ok()
+            .map(|p| unsafe { std::mem::transmute::<_, T>(p) })
     }
 }

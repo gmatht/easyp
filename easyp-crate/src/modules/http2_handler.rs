@@ -61,6 +61,7 @@ mod inner {
 
             // Get path and serve file
             let path = session.get_path();
+            eprintln!("H2: path='{}'", path);
             let doc_root = if self.doc_root.is_empty() {
                 Path::new(".")
             } else {

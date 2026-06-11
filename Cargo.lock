@@ -1177,6 +1177,21 @@ name = "lsb-openssl"
 version = "0.1.0"
 dependencies = [
  "lsb-loader",
+ "lsb-schannel",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "lsb-schannel"
+version = "0.1.0"
+dependencies = [
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "lsb-winhttp"
+version = "0.1.0"
+dependencies = [
  "thiserror 1.0.69",
 ]
 

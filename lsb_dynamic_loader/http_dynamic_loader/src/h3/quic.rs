@@ -7,9 +7,12 @@ pub struct Ngtcp2Lib {
     pub lib: LoadedLibrary,
     pub accept: unsafe extern "C" fn(*mut c_void, *const u8, usize) -> c_int,
     pub conn_server_new: unsafe extern "C" fn(
-        *mut *mut c_void, *const c_void, *const c_void, *const c_void, u32,
-        c_int, *const c_void, c_int, *const c_void,
-        c_int, *const c_void, *const c_void, *mut c_void,
+        *mut *mut c_void, *const c_void, *const c_void,
+        *const c_void, u32,
+        c_int, *const c_void,
+        c_int, *const c_void,
+        c_int, *const c_void,
+        *const c_void, *mut c_void,
     ) -> c_int,
     pub conn_del: unsafe extern "C" fn(*mut c_void),
     pub conn_read_pkt: unsafe extern "C" fn(

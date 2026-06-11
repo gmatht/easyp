@@ -1,0 +1,15 @@
+[package]
+name = "lsb-winhttp"
+version = "0.1.0"
+edition = "2021"
+description = "Native Windows WinHTTP wrapper (HTTP/2 + HTTP/3) for lsb_dynamic_loader"
+license = "MIT"
+
+[dependencies]
+thiserror = "1.0"
+
+[lib]
+name = "lsb_winhttp"
+path = "src/lib.rs"
+
+[target.'cfg(windows)'.dependencies]

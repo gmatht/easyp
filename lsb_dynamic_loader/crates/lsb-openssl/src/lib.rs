@@ -844,6 +844,9 @@ unsafe extern "C" fn alpn_select_cb_static(
 /// X.509 certificate generation via OpenSSL (replaces rcgen).
 pub mod certs;
 
+/// Cross-platform TLS connector and stream (OpenSSL on Unix, SChannel on Windows).
+pub mod tls;
+
 // Public helper: load libcrypto independently (used by certs module).
 pub fn load_libcrypto() -> Result<LoadedLibrary, LoaderError> {
     let crypto_candidates = [

@@ -1766,32 +1766,52 @@ impl OnDemandHttpsServer {
                 openssl.init()?;
 
                 let ctx = openssl.ctx_new(false)?;
-                // Set SNI callback — leak a copy of the Arc so it lives for the SSL_CTX lifetime
+                // Load default self-signed cert on CTX as fallback
+                let cert_path = format!("{}/localhost/fullchain.pem", _cache_dir);
+                let key_path = format!("{}/localhost/privkey.pem", _cache_dir);
+                let _ = ctx.load_cert_file(&cert_path);
+                let _ = ctx.load_key_file(&key_path);
+
+                // Set cert_cb for per-domain cert override.
+                // OpenSSL 3.0 removed SSL_CTX_set_tlsext_servername_callback.
+                // The callback only does fast operations: lookup cached certs
+                // by hostname (RwLock read) and install fallback. No dlopen,
+                // no std Mutex, no thread spawning — safe under OpenSSL locks.
                 let sni_ptr = Arc::into_raw(sni_fallback.clone()) as *mut std::ffi::c_void;
-                if ctx.set_servername_callback(sni_callback, sni_ptr).is_err() {
-                    // OpenSSL 3.x: use cert_cb instead (different return convention:
-                    // 1 = success, 0 = error; vs old SNI callback which uses 0 = OK)
-                    unsafe extern "C" fn sni_cert_cb(
-                        ssl: *mut std::ffi::c_void,
-                        arg: *mut std::ffi::c_void,
-                    ) -> std::os::raw::c_int {
-                        match sni_callback(ssl, std::ptr::null_mut(), arg) {
-                            0 => 1,
-                            _ => 0,
+                unsafe extern "C" fn sni_cert_cb(
+                    ssl: *mut std::ffi::c_void,
+                    arg: *mut std::ffi::c_void,
+                ) -> std::os::raw::c_int {
+                    let state = &*(arg as *const SniFallback);
+                    let openssl = match crate::openssl_global() {
+                        Some(o) => o,
+                        None => return 0,
+                    };
+                    // Look up hostname in the cached cert map (RwLock read,
+                    // safe under OpenSSL locks since it never sleeps/dlopens).
+                    let hostname = openssl.ssl_get_servername(ssl);
+                    if let Some(ref hostname) = hostname {
+                        if let Ok(ptr_cache) = state.ptr_cache.read() {
+                            if let Some(&(x509, pkey)) = ptr_cache.get(hostname) {
+                                let _ = openssl.ssl_use_certificate(ssl, x509);
+                                let _ = openssl.ssl_use_private_key(ssl, pkey);
+                                return 1;
+                            }
                         }
                     }
-                    ctx.set_cert_cb(sni_cert_cb, sni_ptr)?;
+                    // Fallback: use the CTX default cert (already loaded)
+                    // but also install the fallback pointers explicitly.
+                    let _ = openssl.ssl_use_certificate(ssl, state.fallback_x509);
+                    let _ = openssl.ssl_use_private_key(ssl, state.fallback_pkey);
+                    1
                 }
+                ctx.set_cert_cb(sni_cert_cb, sni_ptr)?;
                 #[cfg(feature = "http2")]
                 if http2_enabled {
-                    // Use context-level ALPN select callback for server-side negotiation
-                    // Layout: [total_len: u32] [wire_format: len, bytes, len, bytes...]
                     static ALPN_WIRE: &[u8] = &[13, 0, 0, 0, 2, b'h', b'2', 8, b'h', b't', b't', b'p', b'/', b'1', b'.', b'1'];
                     ctx.set_alpn_select_callback(ALPN_WIRE)?;
                 }
                 let ssl = openssl.ssl_new_from_fd(&ctx, fd)?;
-                // Leak the clone intentionally — the callback needs it; will be cleaned at process exit
-                let _ = sni_ptr;
                 ssl.set_accept_state()?;
                 ssl.accept()?;
                 let alpn = ssl.get_alpn_selected();

@@ -9,6 +9,9 @@ license = "MIT"
 lsb-loader = { workspace = true }
 thiserror = "1.0"
 
+[target.'cfg(windows)'.dependencies]
+lsb-schannel = { workspace = true }
+
 [lib]
 name = "lsb_openssl"
 path = "src/lib.rs"
