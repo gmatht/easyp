@@ -3,14 +3,16 @@
 //! The persistence is a simple key-value store. The intention is to make it simple to implement
 //! other persistence mechanisms than the provided ones, such as against a databases.
 
-use std::collections::hash_map::{DefaultHasher, HashMap};
+use std::collections::HashMap;
+use std::convert::TryInto;
 use std::fs;
-use std::hash::{Hash, Hasher};
 use std::io::{Read, Write};
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+
+use sha2::{Digest, Sha256};
 
 use crate::{Error, Result};
 
@@ -52,9 +54,11 @@ impl<'a> PersistKey<'a> {
     ///
     /// [`account_with_realm`]: ../struct.Directory.html#method.account_with_realm
     pub fn new(realm: &str, kind: PersistKind, key: &'a str) -> Self {
-        let mut h = DefaultHasher::new();
-        realm.hash(&mut h);
-        let realm = h.finish();
+        let mut h = Sha256::new();
+        h.update(realm.as_bytes());
+        let result = h.finalize();
+        // Use first 8 bytes as a big-endian u64 for stable file naming
+        let realm = u64::from_be_bytes(result[..8].try_into().unwrap());
         PersistKey { realm, kind, key }
     }
 }

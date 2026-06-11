@@ -9,7 +9,7 @@ test_https_server() {
     sleep 1
     
     # Start server in background
-    ./target/lto/easyp --verbose --test-mode --http-port 8080 --https-port 8443 > /tmp/easyp_test.log 2>&1 &
+    ./target/release/easyp --verbose --test-mode --http-port 8080 --https-port 8443 > /tmp/easyp_test.log 2>&1 &
     SERVER_PID=$!
     
     # Wait for server to start
@@ -123,7 +123,7 @@ test_remote_server() {
 
 # Build the LTO binary
 echo "🔨 Building LTO binary..."
-cargo build --bin easyp --profile lto
+cargo build --bin easyp --release
 
 # Check if build was successful
 if [ $? -ne 0 ]; then
@@ -132,10 +132,10 @@ if [ $? -ne 0 ]; then
 fi
 
 # Get current binary size
-CURRENT_SIZE=$(stat -c%s target/lto/easyp 2>/dev/null || echo "0")
+CURRENT_SIZE=$(stat -c%s target/release/easyp 2>/dev/null || echo "0")
 CURRENT_SIZE_KB=$((CURRENT_SIZE / 1024))
 
-# Size tracking file
+# Size tracking file (release builds)
 SIZE_FILE=".lto_size"
 
 # Check if we have a previous size recorded
@@ -188,4 +188,4 @@ fi
 
 # Show the binary info
 echo ""
-ls -l target/lto/easyp
+ls -l target/release/easyp

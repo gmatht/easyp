@@ -12,11 +12,7 @@ admin/rustfmt
 /default.profraw
 *.zip
 
-acme-lib
-easyp-crate
 old
-rustls-acme
-tokio-rustls
 website/public
 *.bak
 

@@ -79,6 +79,8 @@ pub type CertCallbackFn = unsafe extern "C" fn(
 ) -> c_int;
 type SslCheckPrivateKeyFn = unsafe extern "C" fn(ssl: *mut c_void) -> c_int;
 type SslGetErrorFn = unsafe extern "C" fn(ssl: *mut c_void, ret: c_int) -> c_int;
+type SslSetTlsextHostNameFn = unsafe extern "C" fn(ssl: *mut c_void, name: *const c_char) -> c_int;
+type SslSetConnectStateFn = unsafe extern "C" fn(ssl: *mut c_void);
 type ErrGetErrorFn = unsafe extern "C" fn() -> c_ulong;
 type ErrErrorStringFn = unsafe extern "C" fn(e: c_ulong, buf: *mut c_char, len: c_int) -> *mut c_char;
 type Sslv23MethodFn = unsafe extern "C" fn() -> *const c_void;
@@ -118,6 +120,8 @@ pub struct Openssl {
     ssl_use_certificate: Option<SslUseCertificateFn>,
     ssl_use_private_key: Option<SslUsePrivateKeyFn>,
     ssl_check_private_key: Option<SslCheckPrivateKeyFn>,
+    ssl_set_tlsext_host_name: Option<SslSetTlsextHostNameFn>,
+    ssl_set_connect_state: Option<SslSetConnectStateFn>,
     ssl_get_error: SslGetErrorFn,
     err_get_error: Option<ErrGetErrorFn>,
     err_error_string: Option<ErrErrorStringFn>,
@@ -212,6 +216,10 @@ impl Openssl {
                 libssl.get_symbol_raw("SSL_use_PrivateKey").ok().map(|p| transmute(p));
             let ssl_check_private_key: Option<SslCheckPrivateKeyFn> =
                 libssl.get_symbol_raw("SSL_check_private_key").ok().map(|p| transmute(p));
+            let ssl_set_tlsext_host_name: Option<SslSetTlsextHostNameFn> =
+                libssl.get_symbol_raw("SSL_set_tlsext_host_name").ok().map(|p| transmute(p));
+            let ssl_set_connect_state: Option<SslSetConnectStateFn> =
+                libssl.get_symbol_raw("SSL_set_connect_state").ok().map(|p| transmute(p));
 
             let err_get_error: Option<ErrGetErrorFn> = libcrypto
                 .as_ref()
@@ -270,6 +278,8 @@ impl Openssl {
                 ssl_use_certificate,
                 ssl_use_private_key,
                 ssl_check_private_key,
+                ssl_set_tlsext_host_name,
+                ssl_set_connect_state,
                 ssl_get_error,
                 err_get_error,
                 err_error_string,
@@ -492,6 +502,8 @@ impl Openssl {
                 ssl_set_alpn_protos: self.ssl_set_alpn_protos,
                 ssl_get0_alpn_selected: self.ssl_get0_alpn_selected,
                 ssl_set_accept_state: self.ssl_set_accept_state,
+                ssl_set_tlsext_host_name: self.ssl_set_tlsext_host_name,
+                ssl_set_connect_state: self.ssl_set_connect_state,
                 err_get_error: self.err_get_error,
                 err_error_string: self.err_error_string,
             })
@@ -629,6 +641,8 @@ pub struct SslConn {
     ssl_set_alpn_protos: Option<SslSetAlpnProtosFn>,
     ssl_get0_alpn_selected: Option<SslGet0AlpnSelectedFn>,
     ssl_set_accept_state: Option<SslSetAcceptStateFn>,
+    ssl_set_tlsext_host_name: Option<SslSetTlsextHostNameFn>,
+    ssl_set_connect_state: Option<SslSetConnectStateFn>,
     err_get_error: Option<ErrGetErrorFn>,
     err_error_string: Option<ErrErrorStringFn>,
 }
@@ -734,6 +748,33 @@ impl SslConn {
         match self.ssl_set_accept_state {
             Some(f) => { unsafe { f(self.ssl); } Ok(()) }
             None => Err(SslError::Other("SSL_set_accept_state not available".into())),
+        }
+    }
+
+    /// Set the SNI hostname for client-mode connections.
+    pub fn set_hostname(&self, hostname: &str) -> Result<(), SslError> {
+        match self.ssl_set_tlsext_host_name {
+            Some(f) => {
+                let cname = CString::new(hostname)
+                    .map_err(|_| SslError::Other("hostname contains null byte".into()))?;
+                unsafe {
+                    let rc = f(self.ssl, cname.as_ptr());
+                    if rc != 1 {
+                        return Err(SslError::Other("SSL_set_tlsext_host_name failed".into()));
+                    }
+                }
+                Ok(())
+            }
+            None => Err(SslError::Other("SSL_set_tlsext_host_name not available".into())),
+        }
+    }
+
+    /// Set connect state for client-mode connections.
+    /// Normally not needed if the SSL object was created from a client-method CTX.
+    pub fn set_connect_state(&self) -> Result<(), SslError> {
+        match self.ssl_set_connect_state {
+            Some(f) => { unsafe { f(self.ssl); } Ok(()) }
+            None => Err(SslError::Other("SSL_set_connect_state not available".into())),
         }
     }
 

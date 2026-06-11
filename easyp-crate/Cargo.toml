@@ -18,8 +18,10 @@ path = "src/bin/easyp.rs"
 
 
 [features]
-default = ["acme", "extensions"]
-acme = ["rustls-acme"]
+default = ["crypto-rustls", "extensions", "http2"]
+acme = []
+crypto-rustls = ["rustls-acme", "rustls/ring", "acme"]
+crypto-lsb = ["dep:acme-lib", "acme-lib/crypto-lsb", "acme"]
 extensions = []
 http2 = ["http-dynamic-loader/h2"]
 http3 = ["http-dynamic-loader/h3"]
@@ -30,8 +32,10 @@ http3 = ["http-dynamic-loader/h3"]
 [dependencies]
 # ACME functionality
 rustls-acme = { path = "../rustls-acme", optional = true }
-
-# Command line parsing (lightweight alternative to clap)
+# acme-lib for crypto-lsb backend (uses lsb-openssl instead of minreq)
+acme-lib = { path = "../acme-lib", optional = true, default-features = false }
+# rustls with ring provider (feature-forwarded for crypto-rustls)
+rustls = { workspace = true, optional = true, features = ["ring"] }
 lexopt = { workspace = true }
 
 # HTTP/2 and HTTP/3 via dynamic loading (feature-gated)
@@ -62,12 +66,12 @@ tempfile = { workspace = true }
 [target.'cfg(not(target_os = "redox"))'.dependencies]
 get_if_addrs = "0.5"
 libc = "0.2"
-minreq = { workspace = true }
+minreq = { path = "../minreq", features = ["https-rustls"], optional = true }
 md5 = "0.7"
 
 [target.'cfg(target_os = "redox")'.dependencies]
 libc = "0.2"
-minreq = { workspace = true }
+minreq = { path = "../minreq", features = ["https-rustls"], optional = true }
 md5 = "0.7"
 
 

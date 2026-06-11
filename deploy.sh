@@ -15,15 +15,12 @@ BINARY_NAME="easyp"
 SERVICE_NAME="easyp"
 
 # Locate existing binary in common target locations or attempt to build it.
-# The project sometimes uses a custom `lto` profile which places the binary in
-# target/<triple>/lto/. Fall back to target/release/ if that doesn't exist.
+# Fall back to target/release/ if that doesn't exist.
 
 # Candidate paths to check (in order of preference)
 possible_paths=(
-    "target/x86_64-unknown-linux-gnu/lto/$BINARY_NAME"
-    "easyp-crate/target/x86_64-unknown-linux-gnu/lto/$BINARY_NAME"
-    "target/lto/$BINARY_NAME"
-    "easyp-crate/target/lto/$BINARY_NAME"
+    "target/x86_64-unknown-linux-gnu/release/$BINARY_NAME"
+    "easyp-crate/target/x86_64-unknown-linux-gnu/release/$BINARY_NAME"
     "target/release/$BINARY_NAME"
     "easyp-crate/target/release/$BINARY_NAME"
     "target/$BINARY_NAME"
@@ -43,8 +40,8 @@ if [ -z "$LOCAL_BINARY" ]; then
 
     # Prefer `cross` for reproducible targets if available, otherwise use cargo.
     if command -v cross >/dev/null 2>&1; then
-        echo "Building with: cross build --profile lto --target x86_64-unknown-linux-gnu"
-        if ! cross build --profile lto --target x86_64-unknown-linux-gnu; then
+        echo "Building with: cross build --release --target x86_64-unknown-linux-gnu"
+        if ! cross build --release --target x86_64-unknown-linux-gnu; then
             echo "cross build failed, falling back to cargo build --release"
             if ! cargo build --release; then
                 echo "cargo build --release failed!"

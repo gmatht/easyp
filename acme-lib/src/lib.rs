@@ -157,6 +157,11 @@ mod cert;
 mod dir;
 mod error;
 mod jwt;
+#[cfg(feature = "crypto-rustls")]
+mod req;
+
+#[cfg(feature = "crypto-lsb")]
+#[path = "req_lsb.rs"]
 mod req;
 mod trans;
 mod util;

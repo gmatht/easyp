@@ -77,22 +77,8 @@ mod inner {
         }
 
         pub async fn run(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-            let local = self.socket.local_addr()?;
-            println!("HTTP/3 on UDP {}", local);
-
-            let mut buf = [0u8; 65535];
-            loop {
-                match self.socket.recv_from(&mut buf).await {
-                    Ok((n, peer)) => {
-                        // QUIC + HTTP/3 processing here
-                        println!("H3: {}B from {}", n, peer);
-                    }
-                    Err(e) => {
-                        eprintln!("H3 recv: {}", e);
-                        break;
-                    }
-                }
-            }
+            let local = self.socket.get_ref().local_addr()?;
+            println!("HTTP/3 on UDP {} (processing not yet implemented)", local);
             Ok(())
         }
     }

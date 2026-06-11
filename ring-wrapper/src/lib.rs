@@ -108,6 +108,8 @@ pub mod digest {
         ctx: Option<*mut c_void>,
         evp: Option<&'static EvpDigest>,
     }
+    unsafe impl Send for Context {}
+    unsafe impl Sync for Context {}
     impl Context {
         pub fn new(algo: &'static Algorithm) -> Self {
             let evp = evp();

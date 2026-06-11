@@ -1,7 +1,7 @@
 [workspace]
 members = [
   # Bogo test shim
-  "bogo",
+  
   # the main library and tests
   "rustls",
   # common code for testing the core crate

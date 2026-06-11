@@ -14,6 +14,7 @@ use std::println;
 
 use crate::types::*;
 
+use acme_lib::persist::Persist as _;
 use async_lock::{RwLock, Mutex};
 use event_listener::Event;
 
@@ -78,11 +79,23 @@ impl AcmeClient {
         let dir = Directory::from_url(persist, DirectoryUrl::Other(&self.config.directory_url))
             .map_err(|e| AcmeError::Client(format!("Failed to create ACME directory: {}", e)))?;
 
+        // Use the same email fallback logic as load_certificate_from_acme_lib
+        // and request_acme_certificate for consistency across all code paths.
+        // This ensures the same realm hash is used for account private key and
+        // certificate persistence, so certs survive server restarts.
+        let email = if self.config.email.is_empty() {
+            // When no email is configured, use a domain-agnostic fallback
+            // (we don't have a domain here, but this ensures consistency)
+            "webmaster@localhost".to_string()
+        } else {
+            self.config.email.clone()
+        };
+
         // Create or load account with fallback for private key format issues
-        println!("🔍 Attempting to load ACME account for: {}", self.config.email);
-        let _account = match dir.account(&self.config.email) {
+        println!("🔍 Attempting to load ACME account for: {}", email);
+        let _account = match dir.account(&email) {
             Ok(account) => {
-                println!("✅ ACME account loaded successfully for email: {}", self.config.email);
+                println!("✅ ACME account loaded successfully for email: {}", email);
                 account
             }
             Err(e) => {
@@ -102,7 +115,7 @@ impl AcmeClient {
                     
                     // Try to create a new account
                     println!("🔍 Attempting to create new ACME account after clearing old data...");
-                    dir.account(&self.config.email)
+                    dir.account(&email)
                         .map_err(|e| AcmeError::Client(format!("Failed to create new ACME account after clearing old data: {}", e)))?
                 } else {
                     println!("❌ Other error type, not handling: {}", error_msg);
@@ -111,7 +124,7 @@ impl AcmeClient {
             }
         };
 
-        println!("✅ ACME account created successfully for email: {}", self.config.email);
+        println!("✅ ACME account created successfully for email: {}", email);
         Ok(())
     }
 
@@ -382,10 +395,13 @@ impl AcmeClient {
     }
 
     /// Load certificate from acme-lib's persistence
+    ///
+    /// First tries the standard acme-lib path via `dir.account()` + `account.certificate()`.
+    /// If that fails (e.g., network unreachable for `newAccount` POST), falls back to
+    /// reading cert/key files directly from disk using `FilePersist` + `PersistKey`.
     async fn load_certificate_from_acme_lib(&self, domain: &str) -> Result<Option<Arc<CertifiedKey>>, AcmeError> {
         println!("🔍 About to call load_certificate_from_acme_lib for domain: {}", domain);
 
-        // Use the same persistence directory as initialize_account
         let cache_dir = self.config.cache_dir.as_deref()
             .ok_or_else(|| AcmeError::Client("ACME cache directory not configured".to_string()))?;
         let acme_persist_dir = format!("{}/acme_lib", cache_dir);
@@ -393,72 +409,113 @@ impl AcmeClient {
         println!("🔍 Cache directory: {}", cache_dir);
         println!("🔍 ACME persist directory: {}", acme_persist_dir);
         
-        // Create a file persistence for ACME data using the same directory
-        let persist = acme_lib::persist::FilePersist::new(&acme_persist_dir);
-        
-        // Use the configured directory URL
-        let url = if self.config.is_staging {
-            acme_lib::DirectoryUrl::LetsEncryptStaging
-        } else {
-            acme_lib::DirectoryUrl::LetsEncrypt
-        };
-        
-        // Create ACME directory
-        let dir = acme_lib::Directory::from_url(persist, url)
-            .map_err(|e| AcmeError::Client(format!("Failed to create ACME directory: {}", e)))?;
-        
-        // Get account using the configured email
+        // Check if directory exists early
+        if !std::path::Path::new(&acme_persist_dir).exists() {
+            println!("⚠️  ACME persist directory does not exist: {}", acme_persist_dir);
+            return Ok(None);
+        }
+
         let email = if self.config.email.is_empty() {
             format!("webmaster@{}", domain)
         } else {
             self.config.email.clone()
         };
-        
-        let account = match dir.account(&email) {
-            Ok(account) => account,
-            Err(_) => {
-                println!("No certificate found in acme-lib persistence for domain: {}", domain);
-                    return Ok(None);
-            }
+
+        // --- Path 1: Try standard acme-lib path via Account ---
+        let persist = acme_lib::persist::FilePersist::new(&acme_persist_dir);
+        let url = if self.config.is_staging {
+            acme_lib::DirectoryUrl::LetsEncryptStaging
+        } else {
+            acme_lib::DirectoryUrl::LetsEncrypt
         };
-        
-        // Try to find existing certificates using acme-lib's API
-        println!("🔍 Looking for existing certificates in acme-lib persistence for domain: {}", domain);
-        println!("🔍 ACME persist directory: {}", acme_persist_dir);
-        
-        // Check if directory exists
-        if !std::path::Path::new(&acme_persist_dir).exists() {
-            println!("⚠️  ACME persist directory does not exist: {}", acme_persist_dir);
-            return Ok(None);
-        }
-        
-        // Use acme-lib's built-in certificate retrieval
-        match account.certificate(domain) {
-            Ok(Some(cert)) => {
-                println!("✅ Found existing certificate in acme-lib persistence for domain: {}", domain);
-                
-                // Cache PEM strings for raw OpenSSL use
-                {
-                    let cert_pem = cert.certificate().to_string();
-                    let key_pem = cert.private_key().to_string();
-                    let mut pem_cache = self.certificate_pem_cache.write().await;
-                    pem_cache.insert(domain.to_string(), (cert_pem, key_pem));
+
+        match acme_lib::Directory::from_url(persist, url) {
+            Ok(dir) => {
+                match dir.account(&email) {
+                    Ok(account) => {
+                        println!("🔍 Looking for existing certificates in acme-lib persistence for domain: {}", domain);
+                        match account.certificate(domain) {
+                            Ok(Some(cert)) => {
+                                println!("✅ Found existing certificate in acme-lib persistence for domain: {}", domain);
+                                let cert_pem = cert.certificate().to_string();
+                                let key_pem = cert.private_key().to_string();
+                                {
+                                    let mut pem_cache = self.certificate_pem_cache.write().await;
+                                    pem_cache.insert(domain.to_string(), (cert_pem, key_pem));
+                                }
+                                let certified_key = self.convert_certificate_to_certified_key(&cert, domain)?;
+                                println!("✅ Successfully loaded certificate from acme-lib persistence for domain: {}", domain);
+                                return Ok(Some(certified_key));
+                            }
+                            Ok(None) => {
+                                println!("🔍 No certificate found via account.certificate() for domain: {}", domain);
+                            }
+                            Err(e) => {
+                                println!("⚠️  account.certificate() error for {}: {}", domain, e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        println!("⚠️  dir.account() failed (network may be unavailable): {}", e);
+                        println!("🔍 Falling back to direct disk read for domain: {}", domain);
+                    }
                 }
-                
-                // Convert acme-lib Certificate to rustls CertifiedKey
-        // Convert to CertifiedKey for the rustls-based cert cache.
-        let certified_key = self.convert_certificate_to_certified_key(&cert, domain)?;
-                println!("✅ Successfully loaded certificate from acme-lib persistence for domain: {}", domain);
-                return Ok(Some(certified_key));
-            }
-            Ok(None) => {
-                println!("🔍 No certificate found in acme-lib persistence for domain: {}", domain);
             }
             Err(e) => {
-                println!("⚠️  Error checking for existing certificate: {}", e);
+                println!("⚠️  Directory::from_url() failed (network may be unavailable): {}", e);
+                println!("🔍 Falling back to direct disk read for domain: {}", domain);
             }
         }
-        
+
+        // --- Path 2: Direct disk read fallback ---
+        // The acme-lib persist files follow the naming convention:
+        // {realm_hash}_key_{domain.replace('.','_')}.key  (private key)
+        // {realm_hash}_crt_{domain.replace('.','_')}.crt  (certificate)
+        // We compute the expected PersistKey (which embeds the SHA-256 realm hash)
+        // and read the files directly via FilePersist.
+        println!("🔍 Trying direct disk read fallback for domain: {}", domain);
+        let persist = acme_lib::persist::FilePersist::new(&acme_persist_dir);
+        let pk_key = acme_lib::persist::PersistKey::new(
+            &email,
+            acme_lib::persist::PersistKind::PrivateKey,
+            domain,
+        );
+        let pk_crt = acme_lib::persist::PersistKey::new(
+            &email,
+            acme_lib::persist::PersistKind::Certificate,
+            domain,
+        );
+
+        let key_result: Result<Option<Vec<u8>>, acme_lib::Error> = persist.get(&pk_key);
+        let cert_result: Result<Option<Vec<u8>>, acme_lib::Error> = persist.get(&pk_crt);
+
+        match (key_result, cert_result) {
+            (Ok(Some(key_bytes)), Ok(Some(cert_bytes))) => {
+                let key_pem = String::from_utf8(key_bytes)
+                    .map_err(|_| AcmeError::Client("Invalid UTF-8 in private key file".to_string()))?;
+                let cert_pem = String::from_utf8(cert_bytes)
+                    .map_err(|_| AcmeError::Client("Invalid UTF-8 in certificate file".to_string()))?;
+
+                println!("✅ Loaded certificate from disk for domain: {}", domain);
+                {
+                    let mut pem_cache = self.certificate_pem_cache.write().await;
+                    pem_cache.insert(domain.to_string(), (cert_pem.clone(), key_pem.clone()));
+                }
+                let certified_key = self.pem_to_certified_key(&cert_pem, &key_pem, domain)?;
+                println!("✅ Successfully loaded certificate from disk for domain: {}", domain);
+                return Ok(Some(certified_key));
+            }
+            (Ok(Some(_)), _) => {
+                println!("🔍 Found private key but no certificate on disk for domain: {}", domain);
+            }
+            (_, Ok(Some(_))) => {
+                println!("🔍 Found certificate but no private key on disk for domain: {}", domain);
+            }
+            _ => {
+                println!("🔍 No certificate files found on disk for domain: {}", domain);
+            }
+        }
+
         Ok(None)
     }
 
@@ -648,21 +705,19 @@ impl AcmeClient {
         Ok(())
     }
 
-    /// Convert acme-lib Certificate to rustls CertifiedKey
-    fn convert_certificate_to_certified_key(
+    /// Convert raw PEM certificate and private key strings to rustls CertifiedKey
+    fn pem_to_certified_key(
         &self,
-        cert: &acme_lib::Certificate,
+        cert_pem: &str,
+        key_pem: &str,
         domain: &str,
     ) -> Result<Arc<CertifiedKey>, AcmeError> {
-        use rustls_pemfile::Item;
         use std::io::Cursor;
         use pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
         use pki_types::pem::PemObject;
 
-        println!("🔍 Converting certificate to CertifiedKey for domain: {}", domain);
+        println!("🔍 Converting PEM to CertifiedKey for domain: {}", domain);
 
-        // Parse the certificate PEM to get DER bytes
-        let cert_pem = cert.certificate();
         let cert_chain = CertificateDer::pem_slice_iter(cert_pem.as_bytes())
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| AcmeError::Client(format!("Failed to parse certificate PEM: {}", e)))?;
@@ -673,14 +728,12 @@ impl AcmeClient {
 
         println!("✅ Parsed {} certificates from PEM", cert_chain.len());
 
-        // Parse the private key PEM to get DER bytes
-        let key_pem = cert.private_key();
         let mut key_cursor = Cursor::new(key_pem.as_bytes());
         let parsed_key = rustls_pemfile::read_one(&mut key_cursor)
             .map_err(|e| AcmeError::Client(format!("Failed to parse private key PEM: {}", e)))?;
 
         let private_key = match parsed_key {
-            Some(Item::Pkcs8Key(key)) => {
+            Some(rustls_pemfile::Item::Pkcs8Key(key)) => {
                 println!("✅ Parsed PKCS#8 private key");
                 PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key))
             }
@@ -689,7 +742,6 @@ impl AcmeClient {
             }
         };
 
-        // Create CertifiedKey using the process default crypto provider
         let provider = rustls::crypto::CryptoProvider::get_default()
             .or_else(|| {
                 let p = rustls::crypto::CryptoProvider::from_crate_features()?;
@@ -698,13 +750,7 @@ impl AcmeClient {
             .ok_or_else(|| AcmeError::Client(
                 "No CryptoProvider available — enable a rustls feature like 'ring' or 'aws-lc-rs'".into()
             ))?;
-        println!("🔍 Creating CertifiedKey with {} certificates", cert_chain.len());
-        
-        // Debug: Print certificate details
-        for (i, cert) in cert_chain.iter().enumerate() {
-            println!("🔍 Certificate {}: {} bytes", i, cert.len());
-        }
-        
+
         let certified_key = CertifiedKey::from_der(
             cert_chain.into(),
             private_key,
@@ -716,6 +762,17 @@ impl AcmeClient {
 
         println!("✅ Successfully created CertifiedKey for domain: {}", domain);
         Ok(Arc::new(certified_key))
+    }
+
+    /// Convert acme-lib Certificate to rustls CertifiedKey
+    fn convert_certificate_to_certified_key(
+        &self,
+        cert: &acme_lib::Certificate,
+        domain: &str,
+    ) -> Result<Arc<CertifiedKey>, AcmeError> {
+        let cert_pem = cert.certificate();
+        let key_pem = cert.private_key();
+        self.pem_to_certified_key(cert_pem, key_pem, domain)
     }
 
     /// Get certificate and key as PEM strings for use with raw OpenSSL.

@@ -75,6 +75,11 @@ impl Session {
     /// Submit the HTTP/2 response with body. Returns serialized output frames.
     /// For large bodies, the output can be many MB (all DATA frames combined).
     pub fn submit_body(&mut self, body: &[u8]) -> Result<Vec<u8>, String> {
+        self.submit_body_with_type(body, "application/octet-stream")
+    }
+
+    /// Submit the HTTP/2 response with body and custom content-type.
+    pub fn submit_body_with_type(&mut self, body: &[u8], content_type: &str) -> Result<Vec<u8>, String> {
         let sid = unsafe { (*self.inner).stream_id };
         if sid <= 0 {
             return Ok(self.collect_output()?);
@@ -94,7 +99,7 @@ impl Session {
         let out = if body.is_empty() {
             let nva = [
                 nv(b":status", b"200"),
-                nv(b"content-type", b"text/plain"),
+                nv(b"content-type", content_type.as_bytes()),
             ];
             unsafe {
                 (self.api.submit_response)(self.session, sid, nva.as_ptr(), 2, std::ptr::null());
@@ -104,7 +109,7 @@ impl Session {
             let content_len = body.len().to_string();
             let nva = [
                 nv(b":status", b"200"),
-                nv(b"content-type", b"application/octet-stream"),
+                nv(b"content-type", content_type.as_bytes()),
                 nv(b"content-length", content_len.as_bytes()),
             ];
 

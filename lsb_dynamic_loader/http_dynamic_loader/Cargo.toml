@@ -16,4 +16,4 @@ path = "src/lib.rs"
 [features]
 h2 = []
 h3 = []
-default = []
+default = ["h2"]
