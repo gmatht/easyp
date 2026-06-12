@@ -433,62 +433,72 @@ fn main() -> std::io::Result<()> {
     fs::write(&dest_path, out)?;
     println!("cargo:rerun-if-changed=extensions");
 
-    // ── Compile C helper for native GnuTLS session setup ──
-    let c_src = Path::new(&manifest_dir).join("src/h3_gnutls.c");
-    if c_src.exists() {
-        cc::Build::new()
-            .file(&c_src)
-            .include("/usr/include")
-            .include("/usr/include/gnutls")
-            .include("/tmp/ngtcp2_src/lib/includes")
-            .include("/tmp/ngtcp2_src/crypto/includes")
-            .compile("h3_gnutls");
-        println!("cargo:warning=H3: compiled h3_gnutls.c");
-    }
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
 
-    // ── Embed gtlsserver binary and required shared libraries ──
-    let embed_file = Path::new(&out_dir).join("gtlsserver_embedded.rs");
-    let candidates = [
-        "/tmp/ngtcp2_build/examples/gtlsserver",
-        "/usr/local/bin/gtlsserver",
-        "/usr/bin/gtlsserver",
-        "/opt/gtlsserver",
-    ];
-    for &src in &candidates {
-        let p = Path::new(src);
-        if p.exists() {
-            let dst = Path::new(&out_dir).join("gtlsserver.bin");
-            let _ = fs::copy(p, &dst);
-            let escaped = dst.display().to_string().replace('\\', "\\\\");
-            let mut code = format!(
-                "pub const GTLSSERVER: &[u8] = include_bytes!(\"{}\");\n", escaped);
-
-            // Embed required shared libraries alongside the binary
-            let libs = [
-                ("/lib/x86_64-linux-gnu/libngtcp2.so.9", "LIBNGTCP2"),
-                ("/lib/x86_64-linux-gnu/libngtcp2_crypto_gnutls.so.2", "LIBNGTCP2_CRYPTO"),
-                ("/lib/x86_64-linux-gnu/libgnutls.so.30", "LIBGNUTLS"),
-            ];
-            for (libpath, const_name) in &libs {
-                let lp = Path::new(libpath);
-                if lp.exists() {
-                    let lib_dst = Path::new(&out_dir).join(&format!("{}.bin", const_name));
-                    let _ = fs::copy(lp, &lib_dst);
-                    let le = lib_dst.display().to_string().replace('\\', "\\\\");
-                    code.push_str(&format!(
-                        "pub const {}: &[u8] = include_bytes!(\"{}\");\n", const_name, le));
-                }
-            }
-
-            fs::write(&embed_file, &code).unwrap();
-            println!("cargo:warning=H3: embedded gtlsserver + libs from {}", src);
-            return Ok(());
+    // ── Compile C helper for native GnuTLS session setup (Unix only) ──
+    if target_os != "windows" {
+        let c_src = Path::new(&manifest_dir).join("src/h3_gnutls.c");
+        if c_src.exists() {
+            cc::Build::new()
+                .file(&c_src)
+                .include("/usr/include")
+                .include("/usr/include/gnutls")
+                .include("/tmp/ngtcp2_src/lib/includes")
+                .include("/tmp/ngtcp2_src/crypto/includes")
+                .compile("h3_gnutls");
+            println!("cargo:warning=H3: compiled h3_gnutls.c");
         }
     }
-    fs::write(&embed_file, "pub const GTLSSERVER: &[u8] = &[];\n\
-             pub const LIBNGTCP2: &[u8] = &[];\n\
-             pub const LIBNGTCP2_CRYPTO: &[u8] = &[];\n\
-             pub const LIBGNUTLS: &[u8] = &[];\n").unwrap();
-    println!("cargo:warning=H3: gtlsserver not found at known paths");
+
+    // ── Embed gtlsserver binary and required shared libraries (Unix only) ──
+    let embed_file = Path::new(&out_dir).join("gtlsserver_embedded.rs");
+    let mut found = false;
+    if target_os != "windows" {
+        let candidates = [
+            "/tmp/ngtcp2_build/examples/gtlsserver",
+            "/usr/local/bin/gtlsserver",
+            "/usr/bin/gtlsserver",
+            "/opt/gtlsserver",
+        ];
+        for &src in &candidates {
+            let p = Path::new(src);
+            if p.exists() {
+                let dst = Path::new(&out_dir).join("gtlsserver.bin");
+                let _ = fs::copy(p, &dst);
+                let escaped = dst.display().to_string().replace('\\', "\\\\");
+                let mut code = format!(
+                    "pub const GTLSSERVER: &[u8] = include_bytes!(\"{}\");\n", escaped);
+
+                // Embed required shared libraries alongside the binary
+                let libs = [
+                    ("/lib/x86_64-linux-gnu/libngtcp2.so.9", "LIBNGTCP2"),
+                    ("/lib/x86_64-linux-gnu/libngtcp2_crypto_gnutls.so.2", "LIBNGTCP2_CRYPTO"),
+                    ("/lib/x86_64-linux-gnu/libgnutls.so.30", "LIBGNUTLS"),
+                ];
+                for (libpath, const_name) in &libs {
+                    let lp = Path::new(libpath);
+                    if lp.exists() {
+                        let lib_dst = Path::new(&out_dir).join(&format!("{}.bin", const_name));
+                        let _ = fs::copy(lp, &lib_dst);
+                        let le = lib_dst.display().to_string().replace('\\', "\\\\");
+                        code.push_str(&format!(
+                            "pub const {}: &[u8] = include_bytes!(\"{}\");\n", const_name, le));
+                    }
+                }
+
+                fs::write(&embed_file, &code).unwrap();
+                println!("cargo:warning=H3: embedded gtlsserver + libs from {}", src);
+                found = true;
+                break;
+            }
+        }
+    }
+    if !found {
+        fs::write(&embed_file, "pub const GTLSSERVER: &[u8] = &[];\n\
+                 pub const LIBNGTCP2: &[u8] = &[];\n\
+                 pub const LIBNGTCP2_CRYPTO: &[u8] = &[];\n\
+                 pub const LIBGNUTLS: &[u8] = &[];\n").unwrap();
+        println!("cargo:warning=H3: gtlsserver not found at known paths");
+    }
     Ok(())
 }

@@ -68,8 +68,9 @@ mod platform {
 
         pub fn set_certificate(&mut self, cert_pem: &str, key_pem: &str) {
             // Write to temp files for OpenSSL's file-based API
-            let cert_path = format!("/tmp/lsb_tls_cert_{}.pem", std::process::id());
-            let key_path = format!("/tmp/lsb_tls_key_{}.pem", std::process::id());
+            let tmp_dir = std::env::temp_dir();
+            let cert_path = format!("{}/lsb_tls_cert_{}.pem", tmp_dir.display(), std::process::id());
+            let key_path = format!("{}/lsb_tls_key_{}.pem", tmp_dir.display(), std::process::id());
             let _ = std::fs::write(&cert_path, cert_pem);
             let _ = std::fs::write(&key_path, key_pem);
             self.cert_path = Some(cert_path);
@@ -77,13 +78,16 @@ mod platform {
         }
 
         pub fn connect(&self, stream: TcpStream, hostname: &str) -> Result<TlsStream, TlsError> {
-            use std::os::unix::io::AsRawFd;
-            let fd = stream.as_raw_fd();
-            // Set non-blocking so the TLS handshake completes via internal BIO,
-            // but we do it in a blocking fashion by making the fd blocking temporarily
-            // Actually, the caller is responsible for blocking mode.
-            // For the synchronous case, we assume the stream is in blocking mode.
-            // For async, the wrapper handles this.
+            #[cfg(unix)]
+            let fd = {
+                use std::os::unix::io::AsRawFd;
+                stream.as_raw_fd()
+            };
+            #[cfg(windows)]
+            let fd = {
+                use std::os::windows::io::AsRawSocket;
+                stream.as_raw_socket() as std::os::raw::c_int
+            };
 
             let ctx = self.openssl.ctx_new(self.is_client)
                 .map_err(|e| TlsError::Protocol(format!("ctx_new: {e}")))?;
@@ -94,7 +98,11 @@ mod platform {
                     .map_err(|e| TlsError::Protocol(format!("set_alpn: {e}")))?;
             }
 
+            #[cfg(unix)]
             let ssl = self.openssl.ssl_new_from_fd(&ctx, fd)
+                .map_err(|e| TlsError::Protocol(format!("ssl_new: {e}")))?;
+            #[cfg(windows)]
+            let ssl = self.openssl.ssl_new_from_socket(&ctx, fd)
                 .map_err(|e| TlsError::Protocol(format!("ssl_new: {e}")))?;
 
             if self.is_client {
@@ -228,11 +236,11 @@ mod platform {
         pub fn set_certificate(&mut self, _cert_pem: &str, _key_pem: &str) {}
 
         pub fn connect(&self, stream: TcpStream, hostname: &str) -> Result<TlsStream, TlsError> {
-            let cred = lsb_schannel::Credentials::new_client()
+            let mut cred = lsb_schannel::Credentials::new_client()
                 .map_err(|e| TlsError::Protocol(format!("schannel cred: {e}")))?;
 
             let mut stream = stream;
-            let (conn, _alpn) = lsb_schannel::client_handshake(&cred, &mut stream, hostname)
+            let (conn, _alpn) = lsb_schannel::client_handshake(&mut cred, &mut stream, hostname)
                 .map_err(|e| TlsError::Protocol(format!("schannel handshake: {e}")))?;
 
             Ok(TlsStream {

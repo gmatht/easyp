@@ -29,8 +29,8 @@ type SECURITY_STATUS = LONG;
 
 const SEC_E_OK: SECURITY_STATUS = 0x00000000;
 const SEC_I_CONTINUE_NEEDED: SECURITY_STATUS = 0x00090312;
-const SEC_E_INCOMPLETE_MESSAGE: SECURITY_STATUS = 0x80090318;
-const SEC_E_INVALID_TOKEN: SECURITY_STATUS = 0x80090308;
+const SEC_E_INCOMPLETE_MESSAGE: SECURITY_STATUS = 0x80090318u32 as i32;
+const SEC_E_INVALID_TOKEN: SECURITY_STATUS = 0x80090308u32 as i32;
 const SEC_I_RENEGOTIATE: SECURITY_STATUS = 0x00090321;
 
 const SECPKG_CRED_OUTBOUND: DWORD = 0x00000002;
@@ -358,7 +358,7 @@ impl TlsConnection {
 /// Returns the TlsConnection (encrypt/decrypt engine) and optionally the
 /// negotiated ALPN protocol.
 pub fn client_handshake(
-    cred: &Credentials,
+    cred: &mut Credentials,
     stream: &mut TcpStream,
     server_name: &str,
 ) -> Result<(TlsConnection, Option<Vec<u8>>), Error> {
@@ -483,9 +483,9 @@ pub struct TlsStream {
 
 impl TlsStream {
     pub fn connect(stream: TcpStream, server_name: &str) -> Result<Self, Error> {
-        let cred = Credentials::new_client()?;
+        let mut cred = Credentials::new_client()?;
         let mut stream = stream;
-        let (conn, _alpn) = client_handshake(&cred, &mut stream, server_name)?;
+        let (conn, _alpn) = client_handshake(&mut cred, &mut stream, server_name)?;
         Ok(TlsStream { stream, conn, read_buf: Vec::new(), decrypted: VecDeque::new() })
     }
 
@@ -571,7 +571,7 @@ impl Read for TlsStream {
 
 impl Write for TlsStream {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.write_all(buf)?;
+        self.write_all(buf).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         Ok(buf.len())
     }
     fn flush(&mut self) -> std::io::Result<()> {

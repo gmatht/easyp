@@ -25,6 +25,8 @@ crypto-lsb = ["dep:acme-lib", "acme-lib/crypto-lsb", "acme"]
 extensions = []
 http2 = ["http-dynamic-loader/h2"]
 http3 = ["http-dynamic-loader/h3"]
+http3-windows = ["dep:lsb-msquic"]
+http-sys = ["dep:lsb-httpapi"]
 
 # Note: UNIX-specific features like privilege dropping are automatically enabled
 # on Unix-like systems through conditional compilation in the source code
@@ -43,6 +45,8 @@ http-dynamic-loader = { path = "../lsb_dynamic_loader/http_dynamic_loader", opti
 
 # LSB OpenSSL runtime loader
 lsb-openssl = { workspace = true }
+lsb-httpapi = { workspace = true, optional = true }
+lsb-msquic = { workspace = true, optional = true }
 
 # Async runtime (smol-based)
 smol = { workspace = true }

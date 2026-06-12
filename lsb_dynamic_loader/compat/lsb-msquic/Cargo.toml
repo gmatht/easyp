@@ -1,0 +1,13 @@
+[package]
+name = "lsb-msquic"
+version = "0.1.0"
+edition = "2021"
+description = "Windows MsQuic (QUIC/HTTP/3) FFI bindings"
+license = "MIT"
+
+[dependencies]
+thiserror = "1.0"
+
+[lib]
+name = "lsb_msquic"
+path = "src/lib.rs"

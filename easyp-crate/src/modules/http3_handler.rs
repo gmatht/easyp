@@ -10,10 +10,10 @@ use super::hourly_stats::HourlyStatsCollector;
 
 include!(concat!(env!("OUT_DIR"), "/gtlsserver_embedded.rs"));
 
-#[cfg(feature = "http3")]
+#[cfg(all(feature = "http3", unix))]
 pub use inner::*;
 
-#[cfg(feature = "http3")]
+#[cfg(all(feature = "http3", unix))]
 mod inner {
     use super::*;
 

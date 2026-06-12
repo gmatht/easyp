@@ -33,13 +33,13 @@ impl HttpProtocolImpl {
 #[cfg(feature = "h2")]
 pub mod h2;
 
-#[cfg(feature = "h3")]
+#[cfg(all(feature = "h3", not(windows)))]
 pub mod h3;
 
 /// Generated ngtcp2 FFI bindings (from build.rs + bindgen).
 /// Provides correct #[repr(C)] struct layouts for ngtcp2_callbacks,
 /// ngtcp2_settings, ngtcp2_transport_params, and related types.
-#[cfg(feature = "h3")]
+#[cfg(all(feature = "h3", not(windows)))]
 #[allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 pub mod ffi {
     include!("ngtcp2_ffi.rs");

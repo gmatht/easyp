@@ -159,6 +159,14 @@ impl Openssl {
                 LoadedLibrary::load_explicit(path, &["ERR_get_error"]).ok()
             }
         } else {
+            #[cfg(windows)]
+            let crypto_candidates = [
+                "libcrypto-3-x64.dll", "libcrypto-1_1-x64.dll", "libcrypto-1_0_0-x64.dll",
+                "libcrypto-3.dll", "libcrypto-1_1.dll",
+                "libcrypto.so.3", "libcrypto.so.1.1", "libcrypto.so.1.0.0",
+                "libcrypto.so.10", "libcrypto.so",
+            ];
+            #[cfg(not(windows))]
             let crypto_candidates = [
                 "libcrypto.so.3", "libcrypto.so.1.1", "libcrypto.so.1.0.0",
                 "libcrypto.so.10", "libcrypto.so",
@@ -173,6 +181,14 @@ impl Openssl {
             }
             LoadedLibrary::load_explicit(path, &required)?
         } else {
+            #[cfg(windows)]
+            let ssl_candidates = [
+                "libssl-3-x64.dll", "libssl-1_1-x64.dll", "libssl-1_0_0-x64.dll",
+                "libssl-3.dll", "libssl-1_1.dll",
+                "libssl.so.3", "libssl.so.1.1", "libssl.so.1.0.0",
+                "libssl.so.10", "libssl.so",
+            ];
+            #[cfg(not(windows))]
             let ssl_candidates = [
                 "libssl.so.3", "libssl.so.1.1", "libssl.so.1.0.0",
                 "libssl.so.10", "libssl.so",
@@ -489,6 +505,7 @@ impl Openssl {
         }
     }
 
+    #[cfg(unix)]
     pub fn ssl_new_from_fd(&self, ctx: &SslCtx, fd: std::os::unix::io::RawFd) -> Result<SslConn, SslError> {
         unsafe {
             let ssl = (self.ssl_new)(ctx.as_ptr());
@@ -496,6 +513,41 @@ impl Openssl {
                 return Err(SslError::Other("SSL_new returned null".into()));
             }
             let rc = (self.ssl_set_fd)(ssl, fd);
+            if rc == 0 {
+                let e = self.last_error_string();
+                (self.ssl_free)(ssl);
+                return Err(SslError::Other(format!("SSL_set_fd failed: {}", e)));
+            }
+            Ok(SslConn {
+                ssl,
+                ssl_free: self.ssl_free,
+                ssl_connect: self.ssl_connect,
+                ssl_accept: self.ssl_accept,
+                ssl_read: self.ssl_read,
+                ssl_write: self.ssl_write,
+                ssl_shutdown: self.ssl_shutdown,
+                ssl_get_error: self.ssl_get_error,
+                ssl_set_alpn_protos: self.ssl_set_alpn_protos,
+                ssl_get0_alpn_selected: self.ssl_get0_alpn_selected,
+                ssl_set_accept_state: self.ssl_set_accept_state,
+                ssl_set_tlsext_host_name: self.ssl_set_tlsext_host_name,
+                ssl_set_connect_state: self.ssl_set_connect_state,
+                err_get_error: self.err_get_error,
+                err_error_string: self.err_error_string,
+            })
+        }
+    }
+
+    /// Create an SSL connection from a socket handle.
+    /// Uses `SSL_set_fd` internally, which accepts a `c_int` on all platforms.
+    #[cfg(any(windows, target_os = "redox"))]
+    pub fn ssl_new_from_socket(&self, ctx: &SslCtx, socket: std::os::raw::c_int) -> Result<SslConn, SslError> {
+        unsafe {
+            let ssl = (self.ssl_new)(ctx.as_ptr());
+            if ssl.is_null() {
+                return Err(SslError::Other("SSL_new returned null".into()));
+            }
+            let rc = (self.ssl_set_fd)(ssl, socket);
             if rc == 0 {
                 let e = self.last_error_string();
                 (self.ssl_free)(ssl);
@@ -861,6 +913,14 @@ pub mod tls;
 
 // Public helper: load libcrypto independently (used by certs module).
 pub fn load_libcrypto() -> Result<LoadedLibrary, LoaderError> {
+    #[cfg(windows)]
+    let crypto_candidates = [
+        "libcrypto-3-x64.dll", "libcrypto-1_1-x64.dll", "libcrypto-1_0_0-x64.dll",
+        "libcrypto-3.dll", "libcrypto-1_1.dll",
+        "libcrypto.so.3", "libcrypto.so.1.1", "libcrypto.so.1.0.0",
+        "libcrypto.so.10", "libcrypto.so",
+    ];
+    #[cfg(not(windows))]
     let crypto_candidates = [
         "libcrypto.so.3", "libcrypto.so.1.1", "libcrypto.so.1.0.0",
         "libcrypto.so.10", "libcrypto.so",

@@ -38,6 +38,14 @@ jobs:
       - name: Build easyp
         run: cargo build --locked -p easyp-crate
 
+      - name: Build easyp (http-sys, Windows only)
+        if: runner.os == 'Windows'
+        run: cargo build --locked -p easyp-crate --features http-sys
+
+      - name: Build easyp (http3-windows, Windows only)
+        if: runner.os == 'Windows'
+        run: cargo build --locked -p easyp-crate --features http3-windows
+
       - name: Test easyp
         run: cargo test --locked -p easyp-crate --all-targets
 

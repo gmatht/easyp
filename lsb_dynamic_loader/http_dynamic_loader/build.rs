@@ -1,6 +1,6 @@
 fn main() {
-    // Only generate ngtcp2 bindings when the h3 feature is enabled
-    #[cfg(feature = "h3")]
+    // Only generate ngtcp2 bindings when the h3 feature is enabled (Unix only)
+    #[cfg(all(feature = "h3", not(windows)))]
     {
         println!("cargo:rerun-if-changed=build.rs");
         println!("cargo:rerun-if-changed=/usr/include/ngtcp2/ngtcp2.h");

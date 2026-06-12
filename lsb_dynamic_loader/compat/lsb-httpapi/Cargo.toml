@@ -1,0 +1,16 @@
+[package]
+name = "lsb-httpapi"
+version = "0.1.0"
+edition = "2021"
+description = "Windows HTTP Server API (HttpApi.dll) FFI bindings for HTTP/2 support"
+license = "MIT"
+
+[dependencies]
+thiserror = "1.0"
+
+[lib]
+name = "lsb_httpapi"
+path = "src/lib.rs"
+
+[target.'cfg(windows)'.dependencies]
+

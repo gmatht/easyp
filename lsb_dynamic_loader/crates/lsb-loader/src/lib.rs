@@ -4,7 +4,9 @@
 //! On Windows, provides basic `LoadLibrary`-based loading via `libloading`.
 
 use libloading::Library;
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
+#[cfg(unix)]
+use std::ffi::CStr;
 use std::path::{Path, PathBuf};
 use std::os::raw::c_void;
 use thiserror::Error;
@@ -35,7 +37,8 @@ pub struct LoadedLibrary {
 
 impl LoadedLibrary {
     /// Attempt to load one of the candidate sonames and resolve required symbols.
-    /// Supported on Unix only; returns `Err` on other platforms.
+    /// On Unix, performs trust checks via `dladdr`.
+    /// On Windows, tries to load each candidate as a DLL.
     pub fn load_from_candidates(
         candidates: &[&str],
         required: &[&str],
@@ -44,11 +47,45 @@ impl LoadedLibrary {
         {
             Self::load_from_candidates_impl(candidates, required)
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            Self::load_from_candidates_windows(candidates, required)
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = (candidates, required);
-            Err(LoaderError::Other("load_from_candidates is Unix-only".into()))
+            Err(LoaderError::Other("load_from_candidates is Unix/Windows-only".into()))
         }
+    }
+
+    #[cfg(windows)]
+    fn load_from_candidates_windows(
+        candidates: &[&str],
+        required: &[&str],
+    ) -> Result<Self, LoaderError> {
+        for &dllname in candidates {
+            match unsafe { Library::new(dllname) } {
+                Ok(lib) => {
+                    let mut missing = Vec::new();
+                    for &sym in required {
+                        unsafe {
+                            let c = CString::new(sym).map_err(|e| LoaderError::Other(format!("bad symbol name: {}", e)))?;
+                            let res = lib.get::<*const c_void>(c.as_bytes_with_nul());
+                            if res.is_err() {
+                                missing.push(sym);
+                            }
+                        }
+                    }
+                    if !missing.is_empty() {
+                        drop(lib);
+                        continue;
+                    }
+                    return Ok(LoadedLibrary { lib, path: PathBuf::from(dllname) });
+                }
+                Err(_) => continue,
+            }
+        }
+        Err(LoaderError::Dlopen("no suitable candidate found".into()))
     }
 
     #[cfg(unix)]

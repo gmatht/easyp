@@ -18,3 +18,6 @@ pub mod http2_handler;
 pub mod http3_handler;
 #[cfg(feature = "http3")]
 pub mod http3_monitor;
+
+#[cfg(all(windows, feature = "http-sys"))]
+pub mod http_sys_handler;

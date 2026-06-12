@@ -33,7 +33,21 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::net::{IpAddr, SocketAddr};
+#[cfg(unix)]
 use std::os::unix::io::AsRawFd;
+#[cfg(windows)]
+use std::os::windows::io::AsRawSocket;
+#[cfg(windows)]
+#[link(name = "ws2_32")]
+extern "system" {
+    fn ioctlsocket(
+        s: std::os::raw::c_int,
+        cmd: std::os::raw::c_ulong,
+        argp: *mut std::os::raw::c_ulong,
+    ) -> std::os::raw::c_int;
+}
+#[cfg(windows)]
+const FIONBIO: std::os::raw::c_ulong = 0x8004667E;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use futures::io::{AsyncReadExt, AsyncWriteExt};
@@ -118,9 +132,17 @@ use connection_policy::ConnectionPolicy;
 #[path = "../modules/http2_handler.rs"]
 mod http2_handler;
 
-#[cfg(feature = "http3")]
+#[cfg(all(feature = "http3", unix))]
 #[path = "../modules/http3_handler.rs"]
 mod http3_handler;
+
+#[cfg(all(windows, feature = "http-sys"))]
+#[path = "../modules/http_sys_handler.rs"]
+mod http_sys_handler;
+
+#[cfg(all(windows, feature = "http3-windows"))]
+#[path = "../modules/http3_handler_windows.rs"]
+mod http3_handler_windows;
 
 #[path = "../modules/openssl_stream.rs"]
 mod openssl_stream;
@@ -554,8 +576,8 @@ fn openssl_global() -> Option<&'static lsb_openssl::Openssl> {
 
 /// On-demand HTTPS server
 struct OnDemandHttpsServer {
-    http_listener: async_io::Async<std::net::TcpListener>,  // Port 80 for ACME challenges
-    https_listener: async_io::Async<std::net::TcpListener>, // Port 443 for HTTPS traffic
+    pub(crate) http_listener: Option<async_io::Async<std::net::TcpListener>>,  // Port 80 for ACME challenges
+    pub(crate) https_listener: Option<async_io::Async<std::net::TcpListener>>, // Port 443 for HTTPS traffic
     sni_fallback: Arc<SniFallback>,
     args: Args,
     http_challenges: Arc<Mutex<BTreeMap<String, String>>>, // token -> key_authorization
@@ -601,12 +623,12 @@ impl OnDemandHttpsServer {
 
         // Create HTTP listener on specified port for ACME challenges
         println!("DEBUG: Attempting to bind HTTP listener to 0.0.0.0:{}", http_port);
-        let http_listener = network_ops::bind_tcp_listener(&format!("0.0.0.0:{}", http_port)).await?;
+        let http_listener = Some(network_ops::bind_tcp_listener(&format!("0.0.0.0:{}", http_port)).await?);
         println!("DEBUG: HTTP listener bound successfully");
 
         // Create HTTPS listener on specified port for HTTPS traffic
         println!("DEBUG: Attempting to bind HTTPS listener to 0.0.0.0:{}", final_https_port);
-        let https_listener = network_ops::bind_tcp_listener(&format!("0.0.0.0:{}", final_https_port)).await?;
+        let https_listener = Some(network_ops::bind_tcp_listener(&format!("0.0.0.0:{}", final_https_port)).await?);
         println!("DEBUG: HTTPS listener bound successfully");
 
         // Look up www-data UID/GID dynamically (only on UNIX systems and when running as root)
@@ -741,6 +763,12 @@ impl OnDemandHttpsServer {
                 // Checking port 80 now (as www-data) would fail on privileged ports.
                 // Use the pre-drop check result from earlier.
 
+                 // ── TLS & ACME setup ──
+                 // On Windows with http-sys, TLS is handled by the kernel (http.sys),
+                 // so we skip the entire OpenSSL initialization block and create a stub
+                 // sni_fallback with null pointers (never used at runtime).
+                 #[cfg(not(all(windows, feature = "http-sys")))]
+                 let sni_fallback = {
                  // Ensure self-signed certificate is available, then create SNI fallback
                  // First, verify OpenSSL version is supported
                  if let Some(ssl) = crate::openssl_global() {
@@ -814,8 +842,22 @@ impl OnDemandHttpsServer {
                            }
                        }
                    }
- 
-                   #[cfg(all(feature = "acme", feature = "crypto-rustls"))]
+                   sni_fallback
+                 };
+
+                 #[cfg(all(windows, feature = "http-sys"))]
+                 let sni_fallback: Arc<SniFallback> = Arc::new(SniFallback {
+                     fallback_x509: std::ptr::null_mut(),
+                     fallback_pkey: std::ptr::null_mut(),
+                     ptr_cache: std::sync::RwLock::new(HashMap::new()),
+                     #[cfg(feature = "acme")]
+                     acme_trigger: std::sync::Mutex::new(None),
+                     #[cfg(feature = "acme")]
+                     pending_domains: std::sync::Mutex::new(std::collections::HashSet::new()),
+                 });
+
+                 #[cfg(not(all(windows, feature = "http-sys")))]
+                 #[cfg(all(feature = "acme", feature = "crypto-rustls"))]
                    let acme_client: Option<AcmeClientType> = {
                        let directory_url = if args.staging {
                            "https://acme-staging-v02.api.letsencrypt.org/directory".to_string()
@@ -881,7 +923,8 @@ impl OnDemandHttpsServer {
                        }
                    };
 
-                   #[cfg(all(feature = "acme", feature = "crypto-lsb"))]
+                    #[cfg(not(all(windows, feature = "http-sys")))]
+                    #[cfg(all(feature = "acme", feature = "crypto-lsb"))]
                    let acme_client: Option<AcmeClientType> = {
                        let directory_url = if args.staging {
                            "https://acme-staging-v02.api.letsencrypt.org/directory".to_string()
@@ -938,13 +981,23 @@ impl OnDemandHttpsServer {
                        }
                    };
 
-                   #[cfg(not(feature = "acme"))]
-                   let acme_client = std::option::Option::<std::sync::Arc<()>>::None;
+                    #[cfg(not(all(windows, feature = "http-sys")))]
+                    #[cfg(not(feature = "acme"))]
+                    let acme_client = std::option::Option::<std::sync::Arc<()>>::None;
 
-                  // Set up on-demand ACME trigger in SniFallback so the SNI callback
-                  // can trigger ACME certificate acquisition for domains not in cache.
-                  #[cfg(feature = "acme")]
-                  if let Some(ref ac_client) = acme_client {
+                    #[cfg(all(windows, feature = "http-sys"))]
+                    #[cfg(feature = "acme")]
+                    let acme_client: Option<crate::AcmeClientType> = None;
+                    #[cfg(all(windows, feature = "http-sys"))]
+                    #[cfg(not(feature = "acme"))]
+                    let acme_client = std::option::Option::<std::sync::Arc<()>>::None;
+
+                   // Set up on-demand ACME trigger in SniFallback so the SNI callback
+                   // can trigger ACME certificate acquisition for domains not in cache.
+                   #[cfg(not(all(windows, feature = "http-sys")))]
+                   {
+                   #[cfg(feature = "acme")]
+                   if let Some(ref ac_client) = acme_client {
                       let ac = ac_client.clone();
                       let sni = sni_fallback.clone();
                       let cache_dir = args.cache_dir.clone();
@@ -984,9 +1037,10 @@ impl OnDemandHttpsServer {
                               sni2.clear_pending(&domain2);
                           });
                       });
-                  }
-
-                  // Domain request logger removed - was unused dead code
+                   }
+                   }
+ 
+                   // Domain request logger removed - was unused dead code
 
                 // Initialize root extensions and admin system before dropping privileges
                 #[cfg(feature = "extensions")]
@@ -1140,7 +1194,7 @@ impl OnDemandHttpsServer {
         println!("Starting async server loop");
 
         // Spawn HTTP/3 handler if enabled
-        #[cfg(feature = "http3")]
+        #[cfg(all(feature = "http3", unix))]
         if self.args.http3_enabled {
             let h3_bind_addr = SocketAddr::new(
                 std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
@@ -1173,12 +1227,39 @@ impl OnDemandHttpsServer {
             }).detach();
         }
 
+        // Spawn Windows HTTP/3 handler if enabled
+        #[cfg(all(windows, feature = "http3-windows"))]
+        if self.args.http3_enabled {
+            let h3_bind_addr = SocketAddr::new(
+                std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+                final_https_port,
+            );
+            let file_server = self.secure_file_server.clone();
+            let security_config = self.secure_file_server.config().clone();
+            smol::spawn(async move {
+                match http3_handler_windows::Http3Handler::new(
+                    Arc::new(file_server),
+                    security_config,
+                    h3_bind_addr,
+                ).await {
+                    Ok(mut handler) => {
+                        if let Err(e) = handler.run().await {
+                            eprintln!("HTTP/3 (Windows) handler error: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to initialize HTTP/3 on Windows: {}", e);
+                    }
+                }
+            }).detach();
+        }
+
         println!("Starting main server loop - listening on HTTP port {} and HTTPS port {}", http_port, final_https_port);
         loop {
             use futures::FutureExt;
 
-            let http_fut = self.http_listener.accept().fuse();
-            let https_fut = self.https_listener.accept().fuse();
+            let http_fut = self.http_listener.as_ref().unwrap().accept().fuse();
+            let https_fut = self.https_listener.as_ref().unwrap().accept().fuse();
             futures::pin_mut!(http_fut, https_fut);
 
             futures::select! {
@@ -1222,11 +1303,17 @@ impl OnDemandHttpsServer {
                             let secure_file_server = self.secure_file_server.clone();
                             let stats_collector = self.stats_collector.clone();
 
-                            smol::spawn(async move {
-                                if let Err(e) = Self::handle_connection_static(stream, sni_fallback, args, extension_registry, http_challenges, secure_file_server, stats_collector).await {
-                                    eprintln!("HTTPS connection error: {}", e);
-                                }
-                            }).detach();
+                            std::thread::Builder::new()
+                                .name("https-handler".into())
+                                .stack_size(4 * 1024 * 1024)
+                                .spawn(move || {
+                                    smol::block_on(async {
+                                        if let Err(e) = Self::handle_connection_static(stream, sni_fallback, args, extension_registry, http_challenges, secure_file_server, stats_collector).await {
+                                            eprintln!("HTTPS connection error: {}", e);
+                                        }
+                                    });
+                                })
+                                .ok();
                         }
                         Err(e) => {
                             eprintln!("❌ HTTPS accept error: {}", e);
@@ -1752,18 +1839,37 @@ impl OnDemandHttpsServer {
         let _cache_dir = args.cache_dir.clone();
         #[cfg(feature = "http2")]
         let http2_enabled = args.http2_enabled;
+        #[cfg(unix)]
         let fd = stream.as_raw_fd();
+        #[cfg(windows)]
+        let fd = stream.as_raw_socket() as std::os::raw::c_int;
 
         #[cfg_attr(not(feature = "http2"), allow(unused_variables))]
-        let (ssl_conn, alpn): (lsb_openssl::SslConn, Option<Vec<u8>>) = smol::unblock(move || -> Result<_, Box<dyn std::error::Error + Send + Sync>> {
+        let (ssl_conn, alpn): (lsb_openssl::SslConn, Option<Vec<u8>>) = {
+            println!("DEBUG TLS: spawning handshake thread");
+            let handle = std::thread::Builder::new()
+                .name("tls-handshake".into())
+                .stack_size(8 * 1024 * 1024)
+                .spawn(move || -> Result<_, Box<dyn std::error::Error + Send + Sync>> {
+                println!("DEBUG TLS: handshake thread started");
                 // Temporarily set fd to blocking for the TLS handshake
+                #[cfg(unix)]
                 unsafe {
                     let flags = libc::fcntl(fd, libc::F_GETFL, 0);
                     libc::fcntl(fd, libc::F_SETFL, flags & !libc::O_NONBLOCK);
                 }
+                #[cfg(windows)]
+                {
+                    let mut mode: std::os::raw::c_ulong = 0;
+                    let ret = unsafe { ioctlsocket(fd, FIONBIO, &mut mode) };
+                    if ret != 0 { return Err(format!("ioctlsocket set blocking failed: {}", ret).into()); }
+                }
 
+                eprintln!("DEBUG TLS: loading OpenSSL");
                 let openssl = lsb_openssl::Openssl::load()?;
+                eprintln!("DEBUG TLS: initializing OpenSSL");
                 openssl.init()?;
+                eprintln!("DEBUG TLS: creating SSL context");
 
                 let ctx = openssl.ctx_new(false)?;
                 // Load default self-signed cert on CTX as fallback
@@ -1817,9 +1923,15 @@ impl OnDemandHttpsServer {
                     ];
                     ctx.set_alpn_select_callback(ALPN_WIRE)?;
                 }
+                #[cfg(unix)]
                 let ssl = openssl.ssl_new_from_fd(&ctx, fd)?;
+                #[cfg(windows)]
+                let ssl = openssl.ssl_new_from_socket(&ctx, fd)?;
+                eprintln!("DEBUG TLS: calling SSL_set_accept_state");
                 ssl.set_accept_state()?;
+                eprintln!("DEBUG TLS: calling SSL_accept");
                 ssl.accept()?;
+                eprintln!("DEBUG TLS: SSL_accept succeeded");
                 let alpn = ssl.get_alpn_selected();
                 if let Some(ref alpn) = alpn {
                     println!("🔍 ALPN negotiated: {:?}", String::from_utf8_lossy(alpn));
@@ -1828,13 +1940,23 @@ impl OnDemandHttpsServer {
                 }
 
                 // Set fd back to non-blocking for async I/O
+                #[cfg(unix)]
                 unsafe {
                     let flags = libc::fcntl(fd, libc::F_GETFL, 0);
                     libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
                 }
+                #[cfg(windows)]
+                {
+                    let mut mode: std::os::raw::c_ulong = 1;
+                    let ret = unsafe { ioctlsocket(fd, FIONBIO, &mut mode) };
+                    if ret != 0 { return Err(format!("ioctlsocket set nonblocking failed: {}", ret).into()); }
+                }
 
                 Ok((ssl, alpn))
-            }).await?;
+            })?;
+            handle.join()
+                .map_err(|_| Box::<dyn std::error::Error + Send + Sync>::from("TLS handshake thread panicked"))??
+        };
 
         let mut tls_stream = openssl_stream::TlsStream::new(stream, ssl_conn);
         println!("TLS handshake completed (libssl)");
@@ -3025,10 +3147,57 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create and run server
     println!("DEBUG: Attempting to create OnDemandHttpsServer");
-    let server = OnDemandHttpsServer::new(args, stats_collector).await?;
+    let mut server = OnDemandHttpsServer::new(args, stats_collector).await?;
     println!("DEBUG: OnDemandHttpsServer created successfully");
-    println!("DEBUG: Starting server run loop");
-    server.run().await?;
+
+    #[cfg(all(windows, feature = "http-sys"))]
+    {
+        // Drop TCP listeners so http.sys can claim the ports
+        server.http_listener = None;
+        server.https_listener = None;
+        println!("DEBUG: Starting http.sys server");
+        let http_sys_server = http_sys_handler::HttpSysServer::new(
+            server.secure_file_server.clone(),
+            Some(server.http_challenges.clone()),
+            #[cfg(feature = "acme")]
+            server.acme_client.clone(),
+            Some(server.extension_registry.clone()),
+        )?;
+
+        let http_port = if server.port_80_available {
+            server.args.http_port
+        } else if server.args.over_9000 {
+            server.args.http_port + 9000
+        } else {
+            server.args.http_port
+        };
+        let https_port = if server.args.over_9000 {
+            server.args.https_port + 9000
+        } else {
+            server.args.https_port
+        };
+        let final_https_port = if server.args.over_9000 {
+            https_port
+        } else if server.args.port != 443 {
+            server.args.port
+        } else {
+            https_port
+        };
+        http_sys_server.register_urls(http_port, final_https_port)?;
+
+        let cert_host = server.args.domains.first().cloned().unwrap_or_else(|| "localhost".to_string());
+        if let Err(e) = http_sys_server.setup_self_signed_cert(&cert_host) {
+            log::error!("Failed to set up self-signed cert: {} — HTTPS may not work until a cert is bound manually via netsh", e);
+        }
+
+        http_sys_server.run()?;
+    }
+
+    #[cfg(not(all(windows, feature = "http-sys")))]
+    {
+        println!("DEBUG: Starting server run loop");
+        server.run().await?;
+    }
 
     Ok(())
     })

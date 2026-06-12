@@ -328,7 +328,7 @@ impl Nghttp2Api {
                 LoadedLibrary::load_explicit(&path, &required)?
             }
             Err(_) => LoadedLibrary::load_from_candidates(
-                &["libnghttp2.so.14", "libnghttp2.so"],
+                &["libnghttp2.so.14", "libnghttp2.so", "nghttp2.dll", "libnghttp2.dll", "libnghttp2-14.dll"],
                 &required,
             )?,
         };
